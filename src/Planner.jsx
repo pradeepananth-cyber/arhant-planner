@@ -32,6 +32,87 @@ const TYPE = Object.fromEntries(TYPES.map((t) => [t.id, t]));
    entered is lost. It is internal and never shown. */
 const STORAGE_KEY = "planner:arhand:g7:v1";
 
+/* ------------------------- where data is saved ---------------------- *
+ * Leave url blank  -> saves to the built-in shared storage (works here).
+ * Set url          -> saves to planner.json on your own server.
+ *                     See server.js and README-server.md.
+ * -------------------------------------------------------------------- */
+const REMOTE = {
+  url: "auto",  // "auto" = /api/planner once deployed; built-in storage inside Claude
+  token: "",    // leave blank and the app will ask for the passphrase if the server wants one
+};
+
+/* On Vercel the app and the API share an origin, so a relative path is
+   all that's needed. Inside Claude there is no API, so fall back to the
+   built-in shared storage. */
+function remoteUrl() {
+  if (REMOTE.url && REMOTE.url !== "auto") return REMOTE.url;
+  if (typeof window === "undefined") return "";
+  if (window.storage) return "";
+  return "/api/planner";
+}
+const usingRemote = () => Boolean(remoteUrl());
+
+let SESSION_KEY = REMOTE.token;                 // set by the passphrase prompt
+const setSessionKey = (v) => { SESSION_KEY = v; };
+const authHeaders = () => (SESSION_KEY ? { "X-Planner-Key": SESSION_KEY } : {});
+
+function httpError(status, message) {
+  const e = new Error(message);
+  e.status = status;
+  return e;
+}
+
+async function describe(r) {
+  try {
+    const d = await r.json();
+    if (d && d.error) return d.error;
+  } catch (e) { /* not json */ }
+  return `server returned ${r.status}`;
+}
+
+async function remoteLoad() {
+  const r = await fetch(remoteUrl(), { headers: authHeaders(), cache: "no-store" });
+  if (!r.ok) throw httpError(r.status, await describe(r));
+  const d = await r.json();
+  return { rev: d.rev || 0, items: Array.isArray(d.items) ? d.items : [] };
+}
+
+async function remoteSave(rev, items) {
+  const r = await fetch(remoteUrl(), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ rev, items }),
+  });
+  if (r.status === 409) return { conflict: true };          // someone saved first
+  if (!r.ok) throw httpError(r.status, await describe(r));
+  const d = await r.json();
+  return { rev: d.rev, conflict: false };
+}
+
+async function localLoad() {
+  if (!window.storage) return null;
+  try {
+    const r = await window.storage.get(STORAGE_KEY, true);
+    const v = r && r.value ? JSON.parse(r.value) : [];
+    return Array.isArray(v) ? v : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+async function localSave(items) {
+  await window.storage.set(STORAGE_KEY, JSON.stringify(items), true);
+}
+
+const SYNC_TEXT = {
+  loading: "Loading",
+  saving: "Saving…",
+  saved: "Saved",
+  error: "Not saved",
+  memory: "Not saving",
+};
+
 /* ---------------------------- date utils --------------------------- */
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -129,7 +210,7 @@ const CSS = `
   color: var(--ink); background: var(--paper);
   min-height: 100vh; -webkit-font-smoothing: antialiased;
 }
-.pl .addbtn { background: var(--ink); color: #fff; ... }
+.pl button { font: inherit; color: inherit; cursor: pointer; }
 .pl :focus-visible { outline: 3px solid #2A5CA8; outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .pl * { transition: none !important; } }
 
@@ -152,11 +233,17 @@ const CSS = `
 .tally b { font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; display: block; line-height: 1.1; }
 .tally span { display: block; }
 .tally button:hover .eyebrow { color: var(--ink); text-decoration: underline; }
-.addbtn {
+.sync { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.sync i { width: 8px; height: 8px; background: #1B6E4F; display: block; }
+.sync[data-s="saving"] i { background: #B0761A; }
+.sync[data-s="loading"] i { background: var(--faint); }
+.sync[data-s="error"] i, .sync[data-s="memory"] i { background: #C4442C; }
+.sync[data-s="error"], .sync[data-s="memory"] { color: #C4442C; }
+.pl .addbtn {
   background: var(--ink); color: #fff; border: 0; padding: 10px 16px;
   font-weight: 700; font-size: 13px; letter-spacing: .06em; text-transform: uppercase;
 }
-.addbtn:hover { background: #34343f; }
+.pl .addbtn:hover { background: #34343f; }
 
 /* ---- shell ---- */
 .shell { display: grid; grid-template-columns: 236px minmax(0,1fr) 340px; align-items: start; }
@@ -173,8 +260,8 @@ const CSS = `
 .subjrow[data-on="true"] { background: var(--soft); }
 .subjrow[data-on="true"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--c); }
 .subjmain { flex: 1 1 auto; min-width: 0; background: none; border: 0; text-align: left; padding: 7px 6px 8px 9px; }
-.subjadd { flex: none; width: 30px; background: none; border: 0; border-left: 1px solid var(--faint); font-size: 15px; font-weight: 800; color: var(--muted); line-height: 1; }
-.subjadd:hover { background: var(--ink); color: #fff; }
+.pl .subjadd { flex: none; width: 30px; background: none; border: 0; border-left: 1px solid var(--faint); font-size: 15px; font-weight: 800; color: var(--muted); line-height: 1; }
+.pl .subjadd:hover { background: var(--ink); color: #fff; }
 .subjrow .nm { font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: -.01em; line-height: 1.15; }
 .subjrow .ct { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
 .dotc { width: 8px; height: 8px; background: var(--c); flex: none; }
@@ -204,7 +291,7 @@ const CSS = `
 /* ---- main ---- */
 .main { padding: 16px 18px 40px; min-width: 0; }
 .navbar { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
-.navbtn { border: 2px solid var(--rule); background: var(--card); width: 34px; height: 34px; font-weight: 800; line-height: 1; }
+.pl .navbtn { border: 2px solid var(--rule); background: var(--card); width: 34px; height: 34px; font-weight: 800; line-height: 1; }
 .navbtn:disabled { opacity: .28; cursor: default; }
 .mtitle { font-size: 22px; font-weight: 800; text-transform: uppercase; letter-spacing: -.02em; }
 .mtitle i { font-style: normal; font-weight: 400; color: var(--muted); }
@@ -215,7 +302,7 @@ const CSS = `
 .seg button[data-on="true"] { background: var(--ink); color: #fff; }
 .seg b { font-variant-numeric: tabular-nums; font-weight: 800; opacity: .5; }
 .seg button[data-on="true"] b { opacity: 1; }
-.ghost { border: 2px solid var(--rule); background: var(--card); padding: 6px 10px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.pl .ghost { border: 2px solid var(--rule); background: var(--card); padding: 6px 10px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .ghost[data-on="true"] { background: var(--ink); color: #fff; }
 
 /* ---- calendar ---- */
@@ -271,8 +358,8 @@ const CSS = `
 .stag { font-size: 9.5px; font-weight: 800; letter-spacing: .08em; padding: 2px 5px; color: #fff; background: var(--c); }
 .ttag { font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .note { font-size: 13px; line-height: 1.5; margin-top: 5px; color: #33333d; white-space: pre-wrap; word-break: break-word; }
-.mini { border: 0; background: none; padding: 2px 4px; font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
-.mini:hover { color: var(--ink); text-decoration: underline; }
+.pl .mini { border: 0; background: none; padding: 2px 4px; font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.pl .mini:hover { color: var(--ink); text-decoration: underline; }
 
 /* ---- day rail ---- */
 .rail { border-left: 3px solid var(--rule); background: var(--card); min-height: calc(100vh - 60px); padding-bottom: 30px; }
@@ -280,7 +367,7 @@ const CSS = `
 .railhd h3 { margin: 2px 0 0; font-size: 19px; font-weight: 800; text-transform: uppercase; letter-spacing: -.02em; }
 .railclose { display: none; }
 .rail .empty { padding: 22px 14px; color: var(--muted); font-size: 13.5px; line-height: 1.5; margin: 0; }
-.railadd { margin: 12px 14px 0; width: calc(100% - 28px); border: 2px dashed var(--rule); background: var(--card); padding: 9px; font-size: 11.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.pl .railadd { margin: 12px 14px 0; width: calc(100% - 28px); border: 2px dashed var(--rule); background: var(--card); padding: 9px; font-size: 11.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
 .railadd:hover { background: var(--soft); }
 @media (max-width: 1140px) {
   .rail {
@@ -310,15 +397,20 @@ const CSS = `
 .opt[data-on="true"] { background: var(--ink); color: #fff; }
 .opt[data-on="true"] .dotc { box-shadow: 0 0 0 1.5px #fff; }
 .quick { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
-.quick button { border: 2px dashed var(--rule); background: var(--card); padding: 5px 8px; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.pl .quick button { border: 2px dashed var(--rule); background: var(--card); padding: 5px 8px; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
 .quick button:hover { background: var(--soft); }
 .modal footer { border-top: 3px solid var(--rule); padding: 11px 14px; display: flex; gap: 9px; align-items: center; }
-.save { flex: 1 1 auto; background: var(--ink); color: #fff; border: 0; padding: 11px; font-weight: 800; font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase; }
-.cancel { border: 2px solid var(--rule); background: var(--card); padding: 10px 13px; font-weight: 700; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
-.del { border: 2px solid #C4442C; color: #C4442C; background: var(--card); padding: 10px 12px; font-weight: 700; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+.pl .save { flex: 1 1 auto; background: var(--ink); color: #fff; border: 0; padding: 11px; font-weight: 800; font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase; }
+.pl .cancel { border: 2px solid var(--rule); background: var(--card); padding: 10px 13px; font-weight: 700; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+.pl .del { border: 2px solid #C4442C; color: #C4442C; background: var(--card); padding: 10px 12px; font-weight: 700; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
 .err { color: #C4442C; font-size: 12px; font-weight: 700; }
 
 .foot { padding: 18px; font-size: 11.5px; color: var(--muted); line-height: 1.6; border-top: 2px solid var(--faint); display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.keybar { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
+.pl .keybar input[type="password"] {
+  width: auto; flex: 0 1 200px; border: 2px solid var(--rule); background: var(--card);
+  padding: 6px 8px; font-family: inherit; font-size: 13px; border-radius: 0; color: var(--ink);
+}
 .banner { background: #FBE9E6; border-bottom: 2px solid var(--rule); padding: 8px 16px; font-size: 12px; font-weight: 600; }
 `;
 
@@ -339,8 +431,15 @@ export default function Planner() {
   const [filter, setFilter] = useState([]);
   const [hideDone, setHideDone] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [rev, setRev] = useState(0);
+  const [sync, setSync] = useState("loading");
+  const [needKey, setNeedKey] = useState(false);
+  const [keyInput, setKeyInput] = useState("");
   const itemsRef = useRef([]);
   itemsRef.current = items;
+  const revRef = useRef(0);
+  revRef.current = rev;
+  const fileRef = useRef(null);
 
   const today = todayKey();
 
@@ -352,43 +451,120 @@ export default function Planner() {
     return () => { try { document.head.removeChild(l); } catch (e) {} };
   }, []);
 
-  /* ---- storage (shared so Arhant, Mom and Dad see the same list) ---- */
-  const read = useCallback(async () => {
-    if (!window.storage) return null;
-    try {
-      const r = await window.storage.get(STORAGE_KEY, true);
-      const v = r && r.value ? JSON.parse(r.value) : [];
-      return Array.isArray(v) ? v : [];
-    } catch (e) {
-      return [];
+  /* ---- saving: your server if configured, shared storage otherwise ---- */
+  const refresh = useCallback(async () => {
+    if (usingRemote()) {
+      try {
+        const d = await remoteLoad();
+        setItems(d.items); setRev(d.rev); setSync("saved"); setProblem("");
+      } catch (e) {
+        setSync("error");
+        if (e.status === 401) { setNeedKey(true); setProblem(""); }
+        else setProblem(`Can't reach the planner server (${e.message}). Nothing you type will be saved until it responds.`);
+      }
+    } else {
+      const v = await localLoad();
+      if (v) { setItems(v); setSync("saved"); }
+      else { setSync("memory"); setProblem("Nothing is being saved here — entries disappear when this page closes."); }
     }
+    setLoaded(true);
   }, []);
 
-  const refresh = useCallback(async () => {
-    const v = await read();
-    if (v) setItems(v);
-    setLoaded(true);
-  }, [read]);
-
   useEffect(() => { refresh(); }, [refresh]);
+
   useEffect(() => {
     const onFocus = () => refresh();
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [refresh]);
 
+  // With a server, pick up what the others entered without a reload.
+  useEffect(() => {
+    if (!usingRemote()) return;
+    const t = setInterval(async () => {
+      if (document.hidden) return;
+      try {
+        const d = await remoteLoad();
+        if (d.rev !== revRef.current) { setItems(d.items); setRev(d.rev); }
+      } catch (e) { /* keep showing what we have */ }
+    }, 20000);
+    return () => clearInterval(t);
+  }, []);
+
   const commit = useCallback(async (mutate) => {
-    const latest = (await read()) || itemsRef.current;
+    setProblem(""); setSync("saving");
+
+    if (usingRemote()) {
+      try {
+        let base = await remoteLoad();
+        let next = mutate(base.items);
+        let res = await remoteSave(base.rev, next);
+        if (res.conflict) {                    // someone saved between our read and write
+          base = await remoteLoad();
+          next = mutate(base.items);
+          res = await remoteSave(base.rev, next);
+        }
+        if (res.conflict) throw new Error("two people saved at once");
+        setItems(next); setRev(res.rev); setSync("saved");
+      } catch (e) {
+        setSync("error");
+        if (e.status === 401) { setNeedKey(true); setProblem(""); }
+        else setProblem(`That change was not saved (${e.message}). Try again.`);
+      }
+      return;
+    }
+
+    const latest = (await localLoad()) || itemsRef.current;
     const next = mutate(latest);
     setItems(next);
-    setProblem("");
-    if (!window.storage) { setProblem("Saving is unavailable here — entries will disappear when this page closes."); return; }
-    try {
-      await window.storage.set(STORAGE_KEY, JSON.stringify(next), true);
-    } catch (e) {
-      setProblem("That change didn't save. Check your connection and try again.");
+    if (!window.storage) {
+      setSync("memory");
+      setProblem("Nothing is being saved here — entries disappear when this page closes.");
+      return;
     }
-  }, [read]);
+    try { await localSave(next); setSync("saved"); }
+    catch (e) { setSync("error"); setProblem("That change was not saved. Check your connection and try again."); }
+  }, []);
+
+  const unlock = () => {
+    if (!keyInput.trim()) return;
+    setSessionKey(keyInput.trim());
+    setKeyInput("");
+    setNeedKey(false);
+    setSync("loading");
+    refresh();
+  };
+
+  /* ---- backup file in and out ---- */
+  const exportBackup = () => {
+    const blob = new Blob([JSON.stringify({ rev, items }, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `arhant-planner-${todayKey()}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
+  const importBackup = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    try {
+      const raw = JSON.parse(await f.text());
+      const incoming = Array.isArray(raw) ? raw : raw.items;
+      if (!Array.isArray(incoming)) throw new Error("no items in that file");
+      let added = 0;
+      await commit((list) => {
+        const have = new Set(list.map((i) => i.id));
+        const fresh = incoming.filter((i) => i && i.id && i.title && i.due && !have.has(i.id));
+        added = fresh.length;
+        return [...list, ...fresh];
+      });
+      setProblem(added ? `Added ${added} item${added === 1 ? "" : "s"} from the backup.` : "Everything in that file was already here.");
+    } catch (err) {
+      setProblem(`That file could not be read (${err.message}).`);
+    }
+  };
 
   /* ---- derived ---- */
   const visible = useMemo(
@@ -461,6 +637,9 @@ export default function Planner() {
       <div className="mast">
         <h1>Arhant &middot; Grade 7 Planner</h1>
         <span className="yr">2026&ndash;2027</span>
+        <span className="sync" data-s={sync} title={usingRemote() ? remoteUrl() : "Shared planner storage"}>
+          <i /> {SYNC_TEXT[sync]}
+        </span>
         <div className="spacer" />
         <div className="tally">
           <button onClick={() => setView("tomorrow")}>
@@ -476,6 +655,16 @@ export default function Planner() {
         </div>
         <button className="addbtn" onClick={() => openNew()}>+ Add item</button>
       </div>
+
+      {needKey && (
+        <div className="banner keybar">
+          <span>This planner is locked. Enter the passphrase to load it.</span>
+          <input type="password" value={keyInput} placeholder="Passphrase"
+            onChange={(e) => setKeyInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") unlock(); }} />
+          <button className="cancel" onClick={unlock}>Unlock</button>
+        </div>
+      )}
 
       {problem && <div className="banner">{problem}</div>}
 
@@ -538,8 +727,16 @@ export default function Planner() {
           )}
 
           <div className="foot">
-            <span>Entries are shared &mdash; everyone who opens this planner sees and edits the same list.</span>
+            <span>
+              {usingRemote()
+                ? "Saved to your server. Everyone who opens this planner sees and edits the same list."
+                : "Saved in shared planner storage. Everyone who opens this planner sees and edits the same list."}
+            </span>
             <button className="mini" onClick={refresh}>Refresh</button>
+            <button className="mini" onClick={exportBackup}>Export backup</button>
+            <button className="mini" onClick={() => fileRef.current && fileRef.current.click()}>Import backup</button>
+            <input ref={fileRef} type="file" accept="application/json,.json"
+              style={{ display: "none" }} onChange={importBackup} />
           </div>
         </div>
 
