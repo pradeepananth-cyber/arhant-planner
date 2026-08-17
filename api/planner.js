@@ -20,6 +20,7 @@ const KEY = process.env.PLANNER_KEY || "";
 
 const REV_KEY = "planner:rev";
 const ITEMS_KEY = "planner:items";
+const LOGS_KEY = "planner:logs";
 
 /* --------------------------- redis over REST ----------------------- */
 
@@ -56,12 +57,15 @@ end
 local nxt = cur + 1
 redis.call('SET', KEYS[1], nxt)
 redis.call('SET', KEYS[2], ARGV[2])
+redis.call('SET', KEYS[3], ARGV[3])
 return nxt
 `;
 
 /* ---------------------------- validation --------------------------- */
 
-const FIELDS = ["id", "subject", "type", "title", "due", "details", "addedBy", "done", "createdAt"];
+const FIELDS = ["id", "subject", "type", "title", "due", "details", "addedBy", "done", "createdAt", "announced"];
+const SUBJECT_IDS = new Set(["religion", "math", "lit", "english", "spelling", "science", "history"]);
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function clean(items) {
   if (!Array.isArray(items)) throw new Error("items must be a list");
@@ -74,9 +78,28 @@ function clean(items) {
     if (typeof it.title !== "string" || it.title.length > 300) throw new Error("bad title");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(it.due)) throw new Error("bad due date");
     if (it.details !== undefined) it.details = String(it.details).slice(0, 4000);
+    if (it.announced !== undefined && !DATE_RE.test(it.announced)) delete it.announced;
     it.done = Boolean(it.done);
     return it;
   });
+}
+
+/* One record per day: which subjects were explicitly marked as having
+   nothing announced, and whether there was school at all. */
+function cleanLogs(logs) {
+  if (!logs || typeof logs !== "object" || Array.isArray(logs)) return {};
+  const out = {};
+  for (const date of Object.keys(logs).slice(0, 500)) {
+    if (!DATE_RE.test(date)) continue;
+    const v = logs[date] || {};
+    out[date] = {
+      none: Array.isArray(v.none) ? [...new Set(v.none.filter((x) => SUBJECT_IDS.has(x)))] : [],
+      noSchool: Boolean(v.noSchool),
+      by: typeof v.by === "string" ? v.by.slice(0, 50) : "",
+      updatedAt: typeof v.updatedAt === "string" ? v.updatedAt.slice(0, 40) : "",
+    };
+  }
+  return out;
 }
 
 /* ------------------------------ handler ---------------------------- */
@@ -100,15 +123,20 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === "GET") {
-      const [rev, itemsRaw] = await redisPipeline([
+      const [rev, itemsRaw, logsRaw] = await redisPipeline([
         ["GET", REV_KEY],
         ["GET", ITEMS_KEY],
+        ["GET", LOGS_KEY],
       ]);
       let items = [];
       if (itemsRaw) {
         try { const p = JSON.parse(itemsRaw); if (Array.isArray(p)) items = p; } catch (e) { items = []; }
       }
-      return res.status(200).json({ rev: Number(rev) || 0, items });
+      let logs = {};
+      if (logsRaw) {
+        try { const p = JSON.parse(logsRaw); if (p && typeof p === "object") logs = p; } catch (e) { logs = {}; }
+      }
+      return res.status(200).json({ rev: Number(rev) || 0, items, logs });
     }
 
     if (req.method === "PUT") {
@@ -117,23 +145,24 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "Could not read that request." });
       }
 
-      let items;
+      let items, logs;
       try {
         items = clean(body.items);
+        logs = cleanLogs(body.logs);
       } catch (e) {
         return res.status(400).json({ error: e.message });
       }
 
       const result = await redis([
-        "EVAL", CAS_SCRIPT, "2", REV_KEY, ITEMS_KEY,
-        String(Number(body.rev) || 0), JSON.stringify(items),
+        "EVAL", CAS_SCRIPT, "3", REV_KEY, ITEMS_KEY, LOGS_KEY,
+        String(Number(body.rev) || 0), JSON.stringify(items), JSON.stringify(logs),
       ]);
 
       const n = Number(result);
       if (n < 0) {
         return res.status(409).json({ error: "Someone else saved first.", rev: -n - 1 });
       }
-      return res.status(200).json({ rev: n, count: items.length });
+      return res.status(200).json({ rev: n, count: items.length, logs: Object.keys(logs).length });
     }
 
     return res.status(405).json({ error: "Use GET or PUT." });

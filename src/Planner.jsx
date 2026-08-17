@@ -71,18 +71,33 @@ async function describe(r) {
   return `server returned ${r.status}`;
 }
 
+/* Everything is one document: the entries, plus a record of which days
+   have been logged. Older saves were a bare array of items. */
+const EMPTY_DOC = { items: [], logs: {} };
+
+function normalise(v) {
+  if (Array.isArray(v)) return { items: v, logs: {} };
+  if (v && typeof v === "object") {
+    return {
+      items: Array.isArray(v.items) ? v.items : [],
+      logs: v.logs && typeof v.logs === "object" ? v.logs : {},
+    };
+  }
+  return { ...EMPTY_DOC };
+}
+
 async function remoteLoad() {
   const r = await fetch(remoteUrl(), { headers: authHeaders(), cache: "no-store" });
   if (!r.ok) throw httpError(r.status, await describe(r));
   const d = await r.json();
-  return { rev: d.rev || 0, items: Array.isArray(d.items) ? d.items : [] };
+  return { rev: d.rev || 0, ...normalise(d) };
 }
 
-async function remoteSave(rev, items) {
+async function remoteSave(rev, doc) {
   const r = await fetch(remoteUrl(), {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ rev, items }),
+    body: JSON.stringify({ rev, items: doc.items, logs: doc.logs }),
   });
   if (r.status === 409) return { conflict: true };          // someone saved first
   if (!r.ok) throw httpError(r.status, await describe(r));
@@ -94,16 +109,47 @@ async function localLoad() {
   if (!window.storage) return null;
   try {
     const r = await window.storage.get(STORAGE_KEY, true);
-    const v = r && r.value ? JSON.parse(r.value) : [];
-    return Array.isArray(v) ? v : [];
+    return normalise(r && r.value ? JSON.parse(r.value) : null);
   } catch (e) {
-    return [];
+    return { ...EMPTY_DOC };
   }
 }
 
-async function localSave(items) {
-  await window.storage.set(STORAGE_KEY, JSON.stringify(items), true);
+async function localSave(doc) {
+  await window.storage.set(STORAGE_KEY, JSON.stringify(doc), true);
 }
+
+/* ------------------------------ daily log --------------------------- *
+ * A day is logged once every subject has been accounted for: either
+ * explicitly marked "nothing announced", or carrying at least one entry
+ * announced that day.
+ * -------------------------------------------------------------------- */
+
+const isSchoolDay = (k) => {
+  const d = dowNum(k);
+  return d >= 1 && d <= 5;
+};
+
+const blankLog = () => ({ none: [], noSchool: false, by: "", updatedAt: "" });
+
+function addressedOn(date, logs, items) {
+  const set = new Set((logs[date] && logs[date].none) || []);
+  for (const it of items) if (it.announced === date) set.add(it.subject);
+  return set;
+}
+
+/* complete | partial | missing | noschool | none (nothing to show) */
+function logStatus(date, logs, items, today) {
+  const log = logs[date];
+  if (log && log.noSchool) return "noschool";
+  const n = addressedOn(date, logs, items).size;
+  if (n >= SUBJECTS.length) return "complete";
+  if (n > 0) return "partial";
+  if (date > today || !isSchoolDay(date)) return "none";
+  return "missing";
+}
+
+const LOG_MARK = { complete: "\u2713", partial: "\u00B7", missing: "!", noschool: "\u2013" };
 
 const SYNC_TEXT = {
   loading: "Loading",
@@ -239,6 +285,55 @@ const CSS = `
 .sync[data-s="loading"] i { background: var(--faint); }
 .sync[data-s="error"] i, .sync[data-s="memory"] i { background: #C4442C; }
 .sync[data-s="error"], .sync[data-s="memory"] { color: #C4442C; }
+/* ---- daily log ---- */
+.pl .addbtn2 {
+  background: var(--card); color: var(--ink); border: 2px solid var(--rule); padding: 8px 13px;
+  font-weight: 700; font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+}
+.pl .addbtn2:hover { background: var(--soft); }
+.pl .addbtn[data-done="true"] { background: #1B6E4F; }
+.pl .addbtn[data-done="true"]:hover { background: #175C42; }
+
+.lg {
+  position: absolute; top: 3px; right: 3px; width: 15px; height: 15px;
+  font-size: 9px; font-weight: 800; line-height: 1; display: grid; place-items: center;
+  border: 1.5px solid var(--rule); background: var(--card); color: var(--ink);
+}
+.lg[data-st="complete"] { background: var(--ink); color: #fff; }
+.lg[data-st="partial"] { border-style: dashed; }
+.lg[data-st="missing"] { border-color: #C4442C; color: #C4442C; }
+.lg[data-st="noschool"] { border-color: var(--faint); color: var(--faint); }
+.cell .lg:hover { box-shadow: 0 0 0 2px var(--faint); }
+
+.legend { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 2px 0; font-size: 11px; color: var(--muted); font-weight: 600; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend .lg { position: static; }
+
+.modal.wide { max-width: 640px; max-height: 88vh; display: flex; flex-direction: column; }
+.modal.wide header { flex: none; align-items: flex-start; }
+.modal.wide header h3 { margin-top: 2px; }
+.progress { flex: none; display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-bottom: 2px solid var(--faint); flex-wrap: wrap; }
+.bar { flex: 1 1 120px; height: 12px; border: 2px solid var(--rule); background: var(--card); min-width: 90px; }
+.bar i { display: block; height: 100%; background: var(--ink); transition: width .2s ease; }
+.bar[data-full="true"] i { background: #1B6E4F; }
+.ptext { font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.logbody { overflow-y: auto; flex: 1 1 auto; }
+.logrow { border-bottom: 2px solid var(--rule); padding: 9px 12px 11px; position: relative; }
+.logrow:last-child { border-bottom: 0; }
+.logrow[data-state="open"] { background: #FCFBF4; }
+.logrow[data-state="open"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #B0761A; }
+.logrow[data-state="none"] { opacity: .62; }
+.logrow[data-state="items"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--c); }
+.lhead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.lname { font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: -.01em; flex: 1 1 auto; }
+.lstate { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.logrow[data-state="open"] .lstate { color: #8a5c10; }
+.lacts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
+.lacts .opt { font-size: 11px; }
+.pl .lacts .opt:disabled { opacity: .35; cursor: default; }
+.logrow .row { padding: 6px 0; border-bottom: 0; }
+.modal.wide footer { flex: none; flex-wrap: wrap; }
+
 .pl .addbtn {
   background: var(--ink); color: #fff; border: 0; padding: 10px 16px;
   font-weight: 700; font-size: 13px; letter-spacing: .06em; text-transform: uppercase;
@@ -435,8 +530,13 @@ export default function Planner() {
   const [sync, setSync] = useState("loading");
   const [needKey, setNeedKey] = useState(false);
   const [keyInput, setKeyInput] = useState("");
+  const [logs, setLogs] = useState({});
+  const [logDate, setLogDate] = useState(null);   // day whose log is open
+  const [logBy, setLogBy] = useState(PEOPLE[0]);
   const itemsRef = useRef([]);
   itemsRef.current = items;
+  const logsRef = useRef({});
+  logsRef.current = logs;
   const revRef = useRef(0);
   revRef.current = rev;
   const fileRef = useRef(null);
@@ -456,15 +556,17 @@ export default function Planner() {
     if (usingRemote()) {
       try {
         const d = await remoteLoad();
-        setItems(d.items); setRev(d.rev); setSync("saved"); setProblem("");
+        setItems(d.items); setLogs(d.logs); setRev(d.rev); setSync("saved"); setProblem("");
       } catch (e) {
         setSync("error");
         if (e.status === 401) { setNeedKey(true); setProblem(""); }
+        else if (e.status === 404) setProblem(`No planner API at ${remoteUrl()}. The serverless function isn't deployed — open /api/health to check. Nothing is being saved until it responds.`);
+        else if (e.status === 503) setProblem(`${e.message} Nothing is being saved until then.`);
         else setProblem(`Can't reach the planner server (${e.message}). Nothing you type will be saved until it responds.`);
       }
     } else {
       const v = await localLoad();
-      if (v) { setItems(v); setSync("saved"); }
+      if (v) { setItems(v.items); setLogs(v.logs); setSync("saved"); }
       else { setSync("memory"); setProblem("Nothing is being saved here — entries disappear when this page closes."); }
     }
     setLoaded(true);
@@ -485,7 +587,7 @@ export default function Planner() {
       if (document.hidden) return;
       try {
         const d = await remoteLoad();
-        if (d.rev !== revRef.current) { setItems(d.items); setRev(d.rev); }
+        if (d.rev !== revRef.current) { setItems(d.items); setLogs(d.logs); setRev(d.rev); }
       } catch (e) { /* keep showing what we have */ }
     }, 20000);
     return () => clearInterval(t);
@@ -497,15 +599,15 @@ export default function Planner() {
     if (usingRemote()) {
       try {
         let base = await remoteLoad();
-        let next = mutate(base.items);
+        let next = mutate(base);
         let res = await remoteSave(base.rev, next);
         if (res.conflict) {                    // someone saved between our read and write
           base = await remoteLoad();
-          next = mutate(base.items);
+          next = mutate(base);
           res = await remoteSave(base.rev, next);
         }
         if (res.conflict) throw new Error("two people saved at once");
-        setItems(next); setRev(res.rev); setSync("saved");
+        setItems(next.items); setLogs(next.logs); setRev(res.rev); setSync("saved");
       } catch (e) {
         setSync("error");
         if (e.status === 401) { setNeedKey(true); setProblem(""); }
@@ -514,9 +616,9 @@ export default function Planner() {
       return;
     }
 
-    const latest = (await localLoad()) || itemsRef.current;
+    const latest = (await localLoad()) || { items: itemsRef.current, logs: logsRef.current };
     const next = mutate(latest);
-    setItems(next);
+    setItems(next.items); setLogs(next.logs);
     if (!window.storage) {
       setSync("memory");
       setProblem("Nothing is being saved here — entries disappear when this page closes.");
@@ -537,7 +639,7 @@ export default function Planner() {
 
   /* ---- backup file in and out ---- */
   const exportBackup = () => {
-    const blob = new Blob([JSON.stringify({ rev, items }, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify({ rev, items, logs }, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `arhant-planner-${todayKey()}.json`;
@@ -553,12 +655,16 @@ export default function Planner() {
       const raw = JSON.parse(await f.text());
       const incoming = Array.isArray(raw) ? raw : raw.items;
       if (!Array.isArray(incoming)) throw new Error("no items in that file");
+      const incomingLogs = (raw && raw.logs && typeof raw.logs === "object") ? raw.logs : {};
       let added = 0;
-      await commit((list) => {
-        const have = new Set(list.map((i) => i.id));
+      await commit((doc) => {
+        const have = new Set(doc.items.map((i) => i.id));
         const fresh = incoming.filter((i) => i && i.id && i.title && i.due && !have.has(i.id));
         added = fresh.length;
-        return [...list, ...fresh];
+        return {
+          items: [...doc.items, ...fresh],
+          logs: { ...incomingLogs, ...doc.logs },   // what is already here wins
+        };
       });
       setProblem(added ? `Added ${added} item${added === 1 ? "" : "s"} from the backup.` : "Everything in that file was already here.");
     } catch (err) {
@@ -596,6 +702,21 @@ export default function Planner() {
     return c;
   }, [visible, today]);
 
+  const todayDone = useMemo(() => addressedOn(today, logs, items).size, [logs, items, today]);
+  const todayStatus = useMemo(() => logStatus(today, logs, items, today), [logs, items, today]);
+
+  // School days in the last month that were never logged.
+  const missedDays = useMemo(() => {
+    const out = [];
+    for (let n = 1; n <= 30; n++) {
+      const k = addDays(today, -n);
+      if (k < YEAR_START) break;
+      if (!isSchoolDay(k)) continue;
+      if (logStatus(k, logs, items, today) === "missing") out.push(k);
+    }
+    return out.reverse();
+  }, [logs, items, today]);
+
   const overdue = useMemo(() => visible.filter((i) => !i.done && i.due < today).length, [visible, today]);
   const dueTomorrow = useMemo(() => {
     const t = addDays(today, 1);
@@ -603,25 +724,66 @@ export default function Planner() {
   }, [visible, today]);
 
   /* ---- actions ---- */
-  const openNew = (subject, date) =>
+  const openNew = (subject, due, announced) =>
     setEditing({
       id: null, subject: subject || SUBJECTS[0].id, type: "assignment",
-      title: "", due: date || "", details: "", addedBy: PEOPLE[0], done: false,
+      title: "", due: due || "", details: "",
+      addedBy: logDate ? logBy : PEOPLE[0], done: false,
+      announced: announced || logDate || today,
     });
 
   const openEdit = (it) => setEditing({ ...it });
 
   const saveDraft = (draft) => {
-    if (draft.id) commit((list) => list.map((i) => (i.id === draft.id ? { ...i, ...draft } : i)));
-    else commit((list) => [...list, { ...draft, id: uid(), createdAt: new Date().toISOString() }]);
+    // Something was announced, so that subject can't also be "nothing".
+    const unmarkNone = (lg) => {
+      const cur = lg[draft.announced];
+      if (!cur || !cur.none || !cur.none.includes(draft.subject)) return lg;
+      return { ...lg, [draft.announced]: { ...cur, none: cur.none.filter((x) => x !== draft.subject) } };
+    };
+    if (draft.id) {
+      commit((doc) => ({ items: doc.items.map((i) => (i.id === draft.id ? { ...i, ...draft } : i)), logs: unmarkNone(doc.logs) }));
+    } else {
+      commit((doc) => ({
+        items: [...doc.items, { ...draft, id: uid(), createdAt: new Date().toISOString() }],
+        logs: unmarkNone(doc.logs),
+      }));
+    }
     setSelected(draft.due);
     const { m, y } = parseKey(draft.due);
     const ix = SCHOOL_MONTHS.findIndex(([yy, mm]) => yy === y && mm === m);
     if (ix >= 0) setMonthIx(ix);
     setEditing(null);
   };
-  const removeItem = (id) => { commit((list) => list.filter((i) => i.id !== id)); setEditing(null); };
-  const toggleDone = (it) => commit((list) => list.map((i) => (i.id === it.id ? { ...i, done: !i.done } : i)));
+  const removeItem = (id) => {
+    commit((doc) => ({ ...doc, items: doc.items.filter((i) => i.id !== id) }));
+    setEditing(null);
+  };
+  const toggleDone = (it) =>
+    commit((doc) => ({ ...doc, items: doc.items.map((i) => (i.id === it.id ? { ...i, done: !i.done } : i)) }));
+
+  /* ---- daily log actions ---- */
+  const writeLog = (date, fn) =>
+    commit((doc) => {
+      const cur = { ...blankLog(), ...(doc.logs[date] || {}) };
+      const next = { ...fn(cur), updatedAt: new Date().toISOString(), by: logBy };
+      return { ...doc, logs: { ...doc.logs, [date]: next } };
+    });
+
+  const setNothing = (date, subjectId, on) =>
+    writeLog(date, (lg) => ({
+      ...lg,
+      none: on ? [...new Set([...lg.none, subjectId])] : lg.none.filter((x) => x !== subjectId),
+    }));
+
+  const setNoSchool = (date, on) => writeLog(date, (lg) => ({ ...lg, noSchool: on }));
+
+  const markRestNothing = (date) => {
+    const done = addressedOn(date, logsRef.current, itemsRef.current);
+    const rest = SUBJECTS.filter((s) => !done.has(s.id)).map((s) => s.id);
+    if (!rest.length) return;
+    writeLog(date, (lg) => ({ ...lg, none: [...new Set([...lg.none, ...rest])] }));
+  };
 
   const pickDay = (k) => { setSelected(k); setRailOpen(true); };
   const toggleSubject = (id) => setFilter((f) => (f.includes(id) ? f.filter((x) => x !== id) : [...f, id]));
@@ -652,8 +814,20 @@ export default function Planner() {
             <b style={{ color: overdue ? "#C4442C" : undefined }}>{overdue}</b>
             <span className="eyebrow">Past due</span>
           </button>
+          <button onClick={() => missedDays.length && setLogDate(missedDays[0])}
+            title={missedDays.length ? `Oldest: ${longDate(missedDays[0])}` : "Every school day logged"}>
+            <b style={{ color: missedDays.length ? "#C4442C" : undefined }}>{missedDays.length}</b>
+            <span className="eyebrow">Missed logs</span>
+          </button>
         </div>
-        <button className="addbtn" onClick={() => openNew()}>+ Add item</button>
+        <button className="addbtn" onClick={() => setLogDate(today)} data-done={todayStatus === "complete"}>
+          {todayStatus === "complete"
+            ? "\u2713 Today logged"
+            : todayStatus === "noschool"
+              ? "No school today"
+              : `Log today \u00B7 ${todayDone}/${SUBJECTS.length}`}
+        </button>
+        <button className="addbtn2" onClick={() => openNew()}>+ Add item</button>
       </div>
 
       {needKey && (
@@ -718,12 +892,23 @@ export default function Planner() {
           {!loaded ? (
             <div className="listwrap"><p className="blank">Opening the planner&hellip;</p></div>
           ) : view === "month" ? (
-            <MonthGrid y={y} m={m} byDate={byDate} today={today} selected={selected} onPick={pickDay} />
+            <MonthGrid y={y} m={m} byDate={byDate} today={today} selected={selected}
+              onPick={pickDay} logs={logs} allItems={items} onOpenLog={setLogDate} />
           ) : (
             <RangeList
               items={rangeItems} today={today} empty={range.empty}
               onToggle={toggleDone} onEdit={openEdit} onAdd={() => openNew()}
             />
+          )}
+
+          {view === "month" && (
+            <div className="legend">
+              <span className="eyebrow">Daily log</span>
+              <span><i className="lg" data-st="complete">{LOG_MARK.complete}</i> logged</span>
+              <span><i className="lg" data-st="partial">{LOG_MARK.partial}</i> started</span>
+              <span><i className="lg" data-st="missing">{LOG_MARK.missing}</i> not logged</span>
+              <span><i className="lg" data-st="noschool">{LOG_MARK.noschool}</i> no school</span>
+            </div>
           )}
 
           <div className="foot">
@@ -744,8 +929,24 @@ export default function Planner() {
           open={railOpen} date={selected} items={selected ? byDate[selected] || [] : []}
           today={today} onClose={() => setRailOpen(false)}
           onToggle={toggleDone} onEdit={openEdit} onAdd={() => openNew(null, selected)}
+          onOpenLog={() => setLogDate(selected)}
+          logStatusText={selected ? logStatus(selected, logs, items, today) : "none"}
         />
       </div>
+
+      {logDate && (
+        <DailyLog
+          date={logDate} logs={logs} items={items} today={today} by={logBy} setBy={setLogBy}
+          onClose={() => setLogDate(null)}
+          onGo={(d) => setLogDate(d)}
+          onNothing={setNothing}
+          onNoSchool={setNoSchool}
+          onRest={markRestNothing}
+          onAdd={(subjectId) => openNew(subjectId, "", logDate)}
+          onEdit={openEdit}
+          onToggle={toggleDone}
+        />
+      )}
 
       {editing && (
         <EntryForm
@@ -804,7 +1005,7 @@ function Spine({ subjects, counts, filter, onToggle, onClear, onAdd }) {
 
 /* ------------------------------ calendar --------------------------- */
 
-function MonthGrid({ y, m, byDate, today, selected, onPick }) {
+function MonthGrid({ y, m, byDate, today, selected, onPick, logs, allItems, onOpenLog }) {
   const lead = firstDow(y, m);
   const total = daysInMonth(y, m);
   const cells = [];
@@ -820,6 +1021,7 @@ function MonthGrid({ y, m, byDate, today, selected, onPick }) {
         const k = key(y, m, d);
         const list = byDate[k] || [];
         const wd = new Date(y, m, d).getDay();
+        const st = logStatus(k, logs, allItems, today);
         return (
           <button
             key={k} className="cell" onClick={() => onPick(k)}
@@ -827,6 +1029,13 @@ function MonthGrid({ y, m, byDate, today, selected, onPick }) {
             aria-label={`${longDate(k)} — ${list.length} item${list.length === 1 ? "" : "s"}`}
           >
             <span className="dnum">{d}</span>
+            {st !== "none" && (
+              <span className="lg" data-st={st}
+                title={{ complete: "Logged", partial: "Log started", missing: "Not logged", noschool: "No school" }[st]}
+                onClick={(e) => { e.stopPropagation(); onOpenLog(k); }}>
+                {LOG_MARK[st]}
+              </span>
+            )}
             <div className="chips">
               {list.slice(0, 3).map((it) => {
                 const s = SUBJ[it.subject];
@@ -885,7 +1094,7 @@ function RangeList({ items, today, empty, onToggle, onEdit, onAdd }) {
 
 /* ------------------------------ item row --------------------------- */
 
-function ItemRow({ it, onToggle, onEdit }) {
+function ItemRow({ it, onToggle, onEdit, showDue }) {
   const s = SUBJ[it.subject];
   return (
     <div className="row" data-done={!!it.done}>
@@ -896,6 +1105,7 @@ function ItemRow({ it, onToggle, onEdit }) {
         <div className="tags">
           <span className="stag" style={{ "--c": s.color }}>{s.code}</span>
           <span className="ttag">{TYPE[it.type].mark} {TYPE[it.type].label}</span>
+          {showDue && <span className="ttag">&middot; due {longDate(it.due)}</span>}
           {it.addedBy && <span className="ttag">&middot; added by {it.addedBy}</span>}
           <button className="mini" onClick={() => onEdit(it)}>Edit</button>
         </div>
@@ -907,7 +1117,7 @@ function ItemRow({ it, onToggle, onEdit }) {
 
 /* ------------------------------ day rail --------------------------- */
 
-function DayRail({ open, date, items, today, onClose, onToggle, onEdit, onAdd }) {
+function DayRail({ open, date, items, today, onClose, onToggle, onEdit, onAdd, onOpenLog, logStatusText }) {
   return (
     <aside className="rail" data-open={open}>
       <div className="railhd">
@@ -926,8 +1136,120 @@ function DayRail({ open, date, items, today, onClose, onToggle, onEdit, onAdd })
         <div>{items.map((it) => <ItemRow key={it.id} it={it} onToggle={onToggle} onEdit={onEdit} />)}</div>
       )}
 
-      {date && <button className="railadd" onClick={onAdd}>+ Add for {longDate(date)}</button>}
+      {date && <button className="railadd" onClick={onAdd}>+ Add item due {longDate(date)}</button>}
+      {date && (
+        <button className="railadd" onClick={onOpenLog}>
+          {logStatusText === "complete" ? "\u2713 View this day's log" : "Open this day's log"}
+        </button>
+      )}
     </aside>
+  );
+}
+
+/* ------------------------------ daily log -------------------------- */
+
+function DailyLog({ date, logs, items, today, by, setBy, onClose, onGo,
+                    onNothing, onNoSchool, onRest, onAdd, onEdit, onToggle }) {
+  useEffect(() => {
+    const esc = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onClose]);
+
+  const log = { ...blankLog(), ...(logs[date] || {}) };
+  const done = addressedOn(date, logs, items);
+  const remaining = SUBJECTS.filter((s) => !done.has(s.id));
+  const pct = Math.round((done.size / SUBJECTS.length) * 100);
+  const finished = done.size >= SUBJECTS.length;
+
+  const prev = addDays(date, -1);
+  const next = addDays(date, 1);
+  const announcedFor = (id) => items.filter((i) => i.announced === date && i.subject === id);
+
+  return (
+    <div className="scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal wide" role="dialog" aria-modal="true" aria-label="Daily log">
+        <header>
+          <div>
+            <span className="eyebrow">
+              Daily log{date === today ? " \u00B7 Today" : date > today ? " \u00B7 Upcoming" : ""}
+            </span>
+            <h3>{longDate(date)}</h3>
+          </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <button className="navbtn" onClick={() => onGo(prev)} aria-label="Previous day"
+              disabled={prev < YEAR_START}>&larr;</button>
+            <button className="navbtn" onClick={() => onGo(next)} aria-label="Next day"
+              disabled={next > YEAR_END}>&rarr;</button>
+            <button className="cancel" onClick={onClose}>Close</button>
+          </div>
+        </header>
+
+        <div className="progress">
+          <div className="bar" data-full={finished}><i style={{ width: `${pct}%` }} /></div>
+          <span className="ptext">
+            {log.noSchool ? "Marked as no school"
+              : finished ? `All ${SUBJECTS.length} subjects checked`
+              : `${done.size} of ${SUBJECTS.length} subjects checked`}
+          </span>
+          <button className="ghost" data-on={log.noSchool} onClick={() => onNoSchool(date, !log.noSchool)}>
+            {log.noSchool ? "There was school" : "No school"}
+          </button>
+        </div>
+
+        {log.noSchool ? (
+          <p className="blank" style={{ borderTop: "2px solid var(--faint)" }}>
+            Nothing to log for this day.
+          </p>
+        ) : (
+          <div className="logbody">
+            {SUBJECTS.map((s) => {
+              const mine = announcedFor(s.id);
+              const isNone = log.none.includes(s.id);
+              const state = mine.length ? "items" : isNone ? "none" : "open";
+              return (
+                <div className="logrow" key={s.id} data-state={state} style={{ "--c": s.color }}>
+                  <div className="lhead">
+                    <span className="stag">{s.code}</span>
+                    <span className="lname">{s.name}</span>
+                    <span className="lstate">
+                      {state === "items" ? `${mine.length} announced` : state === "none" ? "\u2713 Nothing" : "Not checked"}
+                    </span>
+                  </div>
+
+                  {mine.map((it) => <ItemRow key={it.id} it={it} onToggle={onToggle} onEdit={onEdit} showDue />)}
+
+                  <div className="lacts">
+                    <button className="opt" data-on={isNone} disabled={mine.length > 0}
+                      title={mine.length ? "Something was announced for this subject" : ""}
+                      onClick={() => onNothing(date, s.id, !isNone)}>
+                      Nothing announced
+                    </button>
+                    <button className="opt" onClick={() => onAdd(s.id)}>+ Something was assigned</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <footer>
+          {!log.noSchool && remaining.length > 0 && (
+            <button className="save" onClick={() => onRest(date)}>
+              Nothing else announced ({remaining.length} left)
+            </button>
+          )}
+          {(log.noSchool || remaining.length === 0) && (
+            <button className="save" onClick={onClose}>Done</button>
+          )}
+          <div className="opts" style={{ flex: "0 0 auto" }}>
+            {PEOPLE.map((pn) => (
+              <button key={pn} className="opt" data-on={by === pn} onClick={() => setBy(pn)}>{pn}</button>
+            ))}
+          </div>
+        </footer>
+      </div>
+    </div>
   );
 }
 
@@ -964,7 +1286,12 @@ function EntryForm({ draft, onChange, onSave, onCancel, onDelete }) {
     <div className="scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
       <div className="modal" role="dialog" aria-modal="true" aria-label="Planner item">
         <header>
-          <h3>{draft.id ? "Edit item" : "New item"}</h3>
+          <h3>
+            {draft.id ? "Edit item" : "New item"}
+            {draft.announced && <em style={{ fontStyle: "normal", fontWeight: 600, color: "var(--muted)", marginLeft: 8, letterSpacing: 0, textTransform: "none" }}>
+              announced {longDate(draft.announced)}
+            </em>}
+          </h3>
           <button className="cancel" style={{ padding: "4px 8px" }} onClick={onCancel}>Close</button>
         </header>
 
