@@ -129,7 +129,7 @@ const CSS = `
   color: var(--ink); background: var(--paper);
   min-height: 100vh; -webkit-font-smoothing: antialiased;
 }
-.pl button { font: inherit; color: inherit; cursor: pointer; }
+.pl .addbtn { background: var(--ink); color: #fff; ... }
 .pl :focus-visible { outline: 3px solid #2A5CA8; outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .pl * { transition: none !important; } }
 
