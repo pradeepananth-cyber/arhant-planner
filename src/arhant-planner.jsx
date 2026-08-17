@@ -1,0 +1,839 @@
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+
+/* ------------------------------------------------------------------ *
+ *  ARHANT — GRADE 7 PLANNER  ·  2026–2027
+ *  Visual system borrowed from the report card itself: heavy black
+ *  rules, condensed caps, the rotated LANGUAGE ARTS bracket.
+ * ------------------------------------------------------------------ */
+
+const SUBJECTS = [
+  { id: "religion", name: "Religion",               code: "REL",   color: "#6D4AA6" },
+  { id: "math",     name: "Mathematics",            code: "MATH",  color: "#C4442C" },
+  { id: "lit",      name: "Literature/Reading",     code: "LIT",   color: "#1B6E4F", group: "LA" },
+  { id: "english",  name: "English",                code: "ENG",   color: "#2A5CA8", group: "LA" },
+  { id: "spelling", name: "Spelling/Vocabulary",    code: "SPELL", color: "#B0761A", group: "LA" },
+  { id: "science",  name: "Science/Health",         code: "SCI",   color: "#0F7B84" },
+  { id: "history",  name: "History/Social Science", code: "HIST",  color: "#8C3A5E" },
+];
+
+const TYPES = [
+  { id: "assignment", label: "Assignment", mark: "\u25A0" },
+  { id: "quiz",       label: "Quiz",       mark: "\u25B2" },
+  { id: "test",       label: "Test",       mark: "\u2605" },
+  { id: "project",    label: "Project",    mark: "\u25C6" },
+];
+
+const PEOPLE = ["Arhant", "Mom", "Dad"];
+
+const SUBJ = Object.fromEntries(SUBJECTS.map((s) => [s.id, s]));
+const TYPE = Object.fromEntries(TYPES.map((t) => [t.id, t]));
+
+/* Key left unchanged from the first version so nothing already
+   entered is lost. It is internal and never shown. */
+const STORAGE_KEY = "planner:arhand:g7:v1";
+
+/* ---------------------------- date utils --------------------------- */
+
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_NAMES = ["January","February","March","April","May","June","July",
+  "August","September","October","November","December"];
+
+const pad = (n) => String(n).padStart(2, "0");
+const key = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
+const parseKey = (s) => {
+  const [y, m, d] = s.split("-").map(Number);
+  return { y, m: m - 1, d };
+};
+const todayKey = () => {
+  const t = new Date();
+  return key(t.getFullYear(), t.getMonth(), t.getDate());
+};
+const daysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
+const firstDow = (y, m) => new Date(y, m, 1).getDay();
+const dowNum = (s) => {
+  const { y, m, d } = parseKey(s);
+  return new Date(y, m, d).getDay();
+};
+const addDays = (s, n) => {
+  const { y, m, d } = parseKey(s);
+  const t = new Date(y, m, d + n);
+  return key(t.getFullYear(), t.getMonth(), t.getDate());
+};
+const weekStart = (s) => addDays(s, -dowNum(s));           // Sunday
+const nextDow = (s, target) => {
+  let n = 1;
+  while (dowNum(addDays(s, n)) !== target) n++;
+  return addDays(s, n);
+};
+const longDate = (s) => {
+  const { y, m, d } = parseKey(s);
+  return `${DOW[new Date(y, m, d).getDay()]}, ${MONTH_NAMES[m].slice(0, 3)} ${d}`;
+};
+const shortDate = (s) => {
+  const { m, d } = parseKey(s);
+  return `${MONTH_NAMES[m].slice(0, 3)} ${d}`;
+};
+const daysBetween = (a, b) => {
+  const A = parseKey(a), B = parseKey(b);
+  return Math.round((Date.UTC(B.y, B.m, B.d) - Date.UTC(A.y, A.m, A.d)) / 86400000);
+};
+
+/* School year window: August 2026 through the first week of June 2027 */
+const SCHOOL_MONTHS = [
+  [2026, 7], [2026, 8], [2026, 9], [2026, 10], [2026, 11],
+  [2027, 0], [2027, 1], [2027, 2], [2027, 3], [2027, 4], [2027, 5],
+];
+const YEAR_START = "2026-08-01";
+const YEAR_END = "2027-06-30";
+
+/* ------------------------------ ranges ----------------------------- */
+
+const RANGE_IDS = ["tomorrow", "week", "four", "all"];
+
+function rangeFor(id, today) {
+  if (id === "tomorrow") {
+    const t = addDays(today, 1);
+    return { from: t, to: t, tab: "Tomorrow", title: "Due tomorrow", sub: longDate(t), empty: "Nothing due tomorrow." };
+  }
+  if (id === "week") {
+    const s = weekStart(today), e = addDays(s, 6);
+    return { from: s, to: e, tab: "This week", title: "This week", sub: `${longDate(s)} – ${longDate(e)}`, empty: "Nothing due the rest of this week." };
+  }
+  if (id === "four") {
+    const e = addDays(today, 27);
+    return { from: today, to: e, tab: "Next 4 weeks", title: "Next 4 weeks", sub: `${shortDate(today)} – ${shortDate(e)}`, empty: "Nothing due in the next four weeks." };
+  }
+  if (id === "overdue") {
+    return { from: YEAR_START, to: addDays(today, -1), openOnly: true, tab: "Past due", title: "Past due", sub: "Not checked off yet", empty: "Nothing past due. All caught up." };
+  }
+  return { from: YEAR_START, to: YEAR_END, tab: "All", title: "All due dates", sub: "August 2026 – June 2027", empty: "Nothing on the calendar yet." };
+}
+
+const inRange = (it, r) => it.due >= r.from && it.due <= r.to && (!r.openOnly || !it.done);
+
+const hexA = (hex, a) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+};
+
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
+/* ------------------------------ styles ----------------------------- */
+
+const CSS = `
+.pl * { box-sizing: border-box; }
+.pl {
+  --paper:#E7E9EF; --card:#FFFFFF; --ink:#15151C; --muted:#6A6E7C;
+  --rule:#15151C; --faint:#C9CDD8; --soft:#F4F5F8;
+  font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+  color: var(--ink); background: var(--paper);
+  min-height: 100vh; -webkit-font-smoothing: antialiased;
+}
+.pl button { font: inherit; color: inherit; cursor: pointer; }
+.pl :focus-visible { outline: 3px solid #2A5CA8; outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .pl * { transition: none !important; } }
+
+.serif { font-family: "Source Serif 4", Georgia, serif; }
+.eyebrow { font-size: 10px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; color: var(--muted); }
+
+/* ---- masthead ---- */
+.mast {
+  border-bottom: 3px solid var(--rule); background: var(--card);
+  padding: 12px 18px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+.mast h1 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -.02em; text-transform: uppercase; }
+.mast .yr {
+  font-size: 11px; font-weight: 700; letter-spacing: .1em; padding: 3px 8px;
+  border: 2px solid var(--rule); text-transform: uppercase;
+}
+.mast .spacer { flex: 1 1 auto; }
+.tally { display: flex; gap: 14px; align-items: flex-start; }
+.tally button, .tally div { background: none; border: 0; padding: 0; text-align: left; }
+.tally b { font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; display: block; line-height: 1.1; }
+.tally span { display: block; }
+.tally button:hover .eyebrow { color: var(--ink); text-decoration: underline; }
+.addbtn {
+  background: var(--ink); color: #fff; border: 0; padding: 10px 16px;
+  font-weight: 700; font-size: 13px; letter-spacing: .06em; text-transform: uppercase;
+}
+.addbtn:hover { background: #34343f; }
+
+/* ---- shell ---- */
+.shell { display: grid; grid-template-columns: 236px minmax(0,1fr) 340px; align-items: start; }
+@media (max-width: 1140px) { .shell { grid-template-columns: minmax(0,1fr); } }
+
+/* ---- report-card spine ---- */
+.spine { border-right: 3px solid var(--rule); padding: 16px 14px 28px; }
+@media (max-width: 1140px) { .spine { display: none; } }
+.spine-hd { margin-bottom: 10px; }
+.cardgrid { border: 2px solid var(--rule); background: var(--card); }
+.subjrow { display: flex; align-items: stretch; background: var(--card); border-bottom: 2px solid var(--rule); position: relative; }
+.cardgrid > .subjrow:last-child, .lagroup:last-child .subjrow:last-child { border-bottom: 0; }
+.subjrow:hover { background: var(--soft); }
+.subjrow[data-on="true"] { background: var(--soft); }
+.subjrow[data-on="true"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--c); }
+.subjmain { flex: 1 1 auto; min-width: 0; background: none; border: 0; text-align: left; padding: 7px 6px 8px 9px; }
+.subjadd { flex: none; width: 30px; background: none; border: 0; border-left: 1px solid var(--faint); font-size: 15px; font-weight: 800; color: var(--muted); line-height: 1; }
+.subjadd:hover { background: var(--ink); color: #fff; }
+.subjrow .nm { font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: -.01em; line-height: 1.15; }
+.subjrow .ct { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.dotc { width: 8px; height: 8px; background: var(--c); flex: none; }
+.subjrow .ct em { font-style: normal; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; color: var(--muted); text-transform: uppercase; }
+
+.lagroup { position: relative; }
+.labracket {
+  position: absolute; left: -32px; top: -2px; bottom: -2px; width: 32px;
+  border: 3px solid var(--rule); border-right: 0; background: var(--card);
+  display: grid; place-items: center;
+}
+.labracket span {
+  writing-mode: vertical-rl; transform: rotate(180deg); text-align: center;
+  font-size: 10.5px; font-weight: 800; letter-spacing: .16em; white-space: nowrap;
+}
+.spine-inset { padding-left: 32px; }
+
+/* ---- mobile subject strip ---- */
+.strip { display: none; gap: 6px; padding: 10px 12px; overflow-x: auto; border-bottom: 2px solid var(--rule); background: var(--card); }
+@media (max-width: 1140px) { .strip { display: flex; } }
+.pill {
+  border: 2px solid var(--rule); background: var(--card); padding: 5px 9px; white-space: nowrap;
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; display: flex; align-items: center; gap: 6px;
+}
+.pill[data-on="true"] { background: var(--ink); color: #fff; }
+
+/* ---- main ---- */
+.main { padding: 16px 18px 40px; min-width: 0; }
+.navbar { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+.navbtn { border: 2px solid var(--rule); background: var(--card); width: 34px; height: 34px; font-weight: 800; line-height: 1; }
+.navbtn:disabled { opacity: .28; cursor: default; }
+.mtitle { font-size: 22px; font-weight: 800; text-transform: uppercase; letter-spacing: -.02em; }
+.mtitle i { font-style: normal; font-weight: 400; color: var(--muted); }
+.msub { font-size: 12px; font-weight: 600; color: var(--muted); margin: 0 0 12px; letter-spacing: .02em; }
+.seg { display: flex; border: 2px solid var(--rule); max-width: 100%; overflow-x: auto; }
+.seg button { background: var(--card); border: 0; padding: 6px 11px; font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; display: flex; align-items: center; gap: 5px; }
+.seg button + button { border-left: 2px solid var(--rule); }
+.seg button[data-on="true"] { background: var(--ink); color: #fff; }
+.seg b { font-variant-numeric: tabular-nums; font-weight: 800; opacity: .5; }
+.seg button[data-on="true"] b { opacity: 1; }
+.ghost { border: 2px solid var(--rule); background: var(--card); padding: 6px 10px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.ghost[data-on="true"] { background: var(--ink); color: #fff; }
+
+/* ---- calendar ---- */
+.cal { border: 3px solid var(--rule); background: var(--rule); display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); gap: 2px; }
+.dow { background: var(--ink); color: #fff; text-align: center; padding: 5px 0; font-size: 10px; font-weight: 700; letter-spacing: .12em; }
+.cell { background: var(--card); min-height: 106px; border: 0; text-align: left; padding: 4px 4px 6px; display: flex; flex-direction: column; gap: 3px; position: relative; }
+.cell[data-blank="true"] { background: #DDE0E8; cursor: default; }
+.cell:hover:not([data-blank="true"]) { box-shadow: inset 0 0 0 3px var(--faint); }
+.cell[data-sel="true"] { box-shadow: inset 0 0 0 3px var(--ink); }
+.cell .dnum { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; padding: 2px 2px 0; }
+.cell[data-today="true"] .dnum { background: var(--ink); color: #fff; padding: 3px 5px; }
+.cell[data-weekend="true"] .dnum { color: var(--muted); }
+.chips { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.chip {
+  display: flex; align-items: center; gap: 4px; padding: 2px 4px; min-width: 0;
+  border-left: 3px solid var(--c); background: var(--bg); font-size: 10.5px; line-height: 1.25;
+}
+.chip .mk { color: var(--c); font-size: 8px; flex: none; }
+.chip .tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.chip[data-done="true"] { opacity: .45; text-decoration: line-through; }
+.more { font-size: 9.5px; font-weight: 700; letter-spacing: .06em; color: var(--muted); padding-left: 5px; text-transform: uppercase; }
+.dots { display: none; flex-wrap: wrap; gap: 3px; padding: 2px 3px; }
+.dots i { width: 7px; height: 7px; background: var(--c); display: block; }
+@media (max-width: 720px) {
+  .cell { min-height: 62px; }
+  .chips, .more { display: none; }
+  .dots { display: flex; }
+  .mtitle { font-size: 17px; }
+}
+
+/* ---- list ---- */
+.listwrap { border: 3px solid var(--rule); background: var(--card); }
+.daygroup { border-bottom: 2px solid var(--rule); }
+.daygroup:last-child { border-bottom: 0; }
+.daygroup > h4 {
+  margin: 0; padding: 6px 12px; background: var(--soft); border-bottom: 1px solid var(--faint);
+  font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
+  display: flex; justify-content: space-between; gap: 10px;
+}
+.daygroup > h4 u { text-decoration: none; font-weight: 600; color: var(--muted); }
+.daygroup > h4[data-late="true"] { background: #FBE9E6; }
+.blank { padding: 26px 16px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+
+/* ---- item row ---- */
+.row { display: flex; gap: 9px; align-items: flex-start; padding: 9px 12px; border-bottom: 1px solid var(--faint); }
+.row:last-child { border-bottom: 0; }
+.row[data-done="true"] .ttl { text-decoration: line-through; color: var(--muted); }
+.check { width: 19px; height: 19px; flex: none; border: 2px solid var(--rule); background: var(--card); margin-top: 2px; font-size: 12px; line-height: 1; font-weight: 800; display: grid; place-items: center; }
+.check[data-on="true"] { background: var(--ink); color: #fff; }
+.row .body { flex: 1 1 auto; min-width: 0; }
+.row .ttl { font-size: 14.5px; font-weight: 600; line-height: 1.3; word-break: break-word; }
+.tags { display: flex; align-items: center; gap: 7px; margin-top: 3px; flex-wrap: wrap; }
+.stag { font-size: 9.5px; font-weight: 800; letter-spacing: .08em; padding: 2px 5px; color: #fff; background: var(--c); }
+.ttag { font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.note { font-size: 13px; line-height: 1.5; margin-top: 5px; color: #33333d; white-space: pre-wrap; word-break: break-word; }
+.mini { border: 0; background: none; padding: 2px 4px; font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.mini:hover { color: var(--ink); text-decoration: underline; }
+
+/* ---- day rail ---- */
+.rail { border-left: 3px solid var(--rule); background: var(--card); min-height: calc(100vh - 60px); padding-bottom: 30px; }
+.railhd { padding: 14px 14px 12px; border-bottom: 3px solid var(--rule); position: relative; }
+.railhd h3 { margin: 2px 0 0; font-size: 19px; font-weight: 800; text-transform: uppercase; letter-spacing: -.02em; }
+.railclose { display: none; }
+.rail .empty { padding: 22px 14px; color: var(--muted); font-size: 13.5px; line-height: 1.5; margin: 0; }
+.railadd { margin: 12px 14px 0; width: calc(100% - 28px); border: 2px dashed var(--rule); background: var(--card); padding: 9px; font-size: 11.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.railadd:hover { background: var(--soft); }
+@media (max-width: 1140px) {
+  .rail {
+    position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 40; min-height: 0;
+    max-height: 76vh; overflow-y: auto; border-left: 0; border-top: 3px solid var(--rule);
+    transform: translateY(102%); transition: transform .22s ease; box-shadow: 0 -8px 26px rgba(0,0,0,.18);
+  }
+  .rail[data-open="true"] { transform: none; }
+  .railclose { display: block; position: absolute; right: 10px; top: 12px; border: 2px solid var(--rule); background: var(--card); width: 30px; height: 30px; font-weight: 800; }
+}
+
+/* ---- modal ---- */
+.scrim { position: fixed; inset: 0; background: rgba(15,15,22,.55); z-index: 60; display: grid; place-items: center; padding: 16px; overflow-y: auto; }
+.modal { background: var(--card); border: 3px solid var(--rule); width: 100%; max-width: 470px; box-shadow: 10px 10px 0 rgba(21,21,28,.22); }
+.modal header { border-bottom: 3px solid var(--rule); padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; }
+.modal header h3 { margin: 0; font-size: 15px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.modal .bd { padding: 14px; display: flex; flex-direction: column; gap: 13px; }
+.step { display: flex; align-items: baseline; gap: 7px; margin-bottom: 5px; }
+.step u { text-decoration: none; font-size: 9px; font-weight: 800; letter-spacing: .08em; background: var(--ink); color: #fff; padding: 2px 5px; }
+.pl input[type="text"], .pl input[type="date"], .pl textarea {
+  width: 100%; border: 2px solid var(--rule); background: var(--card); padding: 8px 9px;
+  font-family: inherit; font-size: 14px; color: var(--ink); border-radius: 0;
+}
+.pl textarea { font-family: "Source Serif 4", Georgia, serif; resize: vertical; min-height: 70px; line-height: 1.5; }
+.opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.opt { border: 2px solid var(--rule); background: var(--card); padding: 6px 9px; font-size: 11.5px; font-weight: 700; letter-spacing: .04em; display: flex; align-items: center; gap: 5px; }
+.opt[data-on="true"] { background: var(--ink); color: #fff; }
+.opt[data-on="true"] .dotc { box-shadow: 0 0 0 1.5px #fff; }
+.quick { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.quick button { border: 2px dashed var(--rule); background: var(--card); padding: 5px 8px; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.quick button:hover { background: var(--soft); }
+.modal footer { border-top: 3px solid var(--rule); padding: 11px 14px; display: flex; gap: 9px; align-items: center; }
+.save { flex: 1 1 auto; background: var(--ink); color: #fff; border: 0; padding: 11px; font-weight: 800; font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase; }
+.cancel { border: 2px solid var(--rule); background: var(--card); padding: 10px 13px; font-weight: 700; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+.del { border: 2px solid #C4442C; color: #C4442C; background: var(--card); padding: 10px 12px; font-weight: 700; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+.err { color: #C4442C; font-size: 12px; font-weight: 700; }
+
+.foot { padding: 18px; font-size: 11.5px; color: var(--muted); line-height: 1.6; border-top: 2px solid var(--faint); display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.banner { background: #FBE9E6; border-bottom: 2px solid var(--rule); padding: 8px 16px; font-size: 12px; font-weight: 600; }
+`;
+
+/* ---------------------------- component ---------------------------- */
+
+export default function Planner() {
+  const [items, setItems] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [problem, setProblem] = useState("");
+  const [view, setView] = useState("month");       // "month" | a range id
+  const [monthIx, setMonthIx] = useState(() => {
+    const t = new Date();
+    const ix = SCHOOL_MONTHS.findIndex(([y, m]) => y === t.getFullYear() && m === t.getMonth());
+    return ix < 0 ? 0 : ix;
+  });
+  const [selected, setSelected] = useState(() => todayKey());
+  const [railOpen, setRailOpen] = useState(false);
+  const [filter, setFilter] = useState([]);
+  const [hideDone, setHideDone] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const itemsRef = useRef([]);
+  itemsRef.current = items;
+
+  const today = todayKey();
+
+  useEffect(() => {
+    const l = document.createElement("link");
+    l.rel = "stylesheet";
+    l.href = "https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap";
+    document.head.appendChild(l);
+    return () => { try { document.head.removeChild(l); } catch (e) {} };
+  }, []);
+
+  /* ---- storage (shared so Arhant, Mom and Dad see the same list) ---- */
+  const read = useCallback(async () => {
+    if (!window.storage) return null;
+    try {
+      const r = await window.storage.get(STORAGE_KEY, true);
+      const v = r && r.value ? JSON.parse(r.value) : [];
+      return Array.isArray(v) ? v : [];
+    } catch (e) {
+      return [];
+    }
+  }, []);
+
+  const refresh = useCallback(async () => {
+    const v = await read();
+    if (v) setItems(v);
+    setLoaded(true);
+  }, [read]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refresh]);
+
+  const commit = useCallback(async (mutate) => {
+    const latest = (await read()) || itemsRef.current;
+    const next = mutate(latest);
+    setItems(next);
+    setProblem("");
+    if (!window.storage) { setProblem("Saving is unavailable here — entries will disappear when this page closes."); return; }
+    try {
+      await window.storage.set(STORAGE_KEY, JSON.stringify(next), true);
+    } catch (e) {
+      setProblem("That change didn't save. Check your connection and try again.");
+    }
+  }, [read]);
+
+  /* ---- derived ---- */
+  const visible = useMemo(
+    () => items.filter((i) => (filter.length === 0 || filter.includes(i.subject)) && (!hideDone || !i.done)),
+    [items, filter, hideDone]
+  );
+
+  const byDate = useMemo(() => {
+    const m = {};
+    for (const i of visible) (m[i.due] = m[i.due] || []).push(i);
+    for (const k of Object.keys(m)) {
+      m[k].sort((a, b) => SUBJECTS.findIndex((s) => s.id === a.subject) - SUBJECTS.findIndex((s) => s.id === b.subject));
+    }
+    return m;
+  }, [visible]);
+
+  const openCounts = useMemo(() => {
+    const c = {};
+    for (const i of items) if (!i.done && i.due >= today) c[i.subject] = (c[i.subject] || 0) + 1;
+    return c;
+  }, [items, today]);
+
+  const rangeCounts = useMemo(() => {
+    const c = {};
+    for (const id of RANGE_IDS) {
+      const r = rangeFor(id, today);
+      c[id] = visible.filter((i) => inRange(i, r) && !i.done).length;
+    }
+    return c;
+  }, [visible, today]);
+
+  const overdue = useMemo(() => visible.filter((i) => !i.done && i.due < today).length, [visible, today]);
+  const dueTomorrow = useMemo(() => {
+    const t = addDays(today, 1);
+    return visible.filter((i) => !i.done && i.due === t).length;
+  }, [visible, today]);
+
+  /* ---- actions ---- */
+  const openNew = (subject, date) =>
+    setEditing({
+      id: null, subject: subject || SUBJECTS[0].id, type: "assignment",
+      title: "", due: date || "", details: "", addedBy: PEOPLE[0], done: false,
+    });
+
+  const openEdit = (it) => setEditing({ ...it });
+
+  const saveDraft = (draft) => {
+    if (draft.id) commit((list) => list.map((i) => (i.id === draft.id ? { ...i, ...draft } : i)));
+    else commit((list) => [...list, { ...draft, id: uid(), createdAt: new Date().toISOString() }]);
+    setSelected(draft.due);
+    const { m, y } = parseKey(draft.due);
+    const ix = SCHOOL_MONTHS.findIndex(([yy, mm]) => yy === y && mm === m);
+    if (ix >= 0) setMonthIx(ix);
+    setEditing(null);
+  };
+  const removeItem = (id) => { commit((list) => list.filter((i) => i.id !== id)); setEditing(null); };
+  const toggleDone = (it) => commit((list) => list.map((i) => (i.id === it.id ? { ...i, done: !i.done } : i)));
+
+  const pickDay = (k) => { setSelected(k); setRailOpen(true); };
+  const toggleSubject = (id) => setFilter((f) => (f.includes(id) ? f.filter((x) => x !== id) : [...f, id]));
+
+  const [y, m] = SCHOOL_MONTHS[monthIx];
+  const range = view === "month" ? null : rangeFor(view, today);
+  const rangeItems = range ? visible.filter((i) => inRange(i, range)) : [];
+
+  return (
+    <div className="pl">
+      <style>{CSS}</style>
+
+      <div className="mast">
+        <h1>Arhant &middot; Grade 7 Planner</h1>
+        <span className="yr">2026&ndash;2027</span>
+        <div className="spacer" />
+        <div className="tally">
+          <button onClick={() => setView("tomorrow")}>
+            <b>{dueTomorrow}</b><span className="eyebrow">Tomorrow</span>
+          </button>
+          <button onClick={() => setView("week")}>
+            <b>{rangeCounts.week || 0}</b><span className="eyebrow">This week</span>
+          </button>
+          <button onClick={() => setView("overdue")}>
+            <b style={{ color: overdue ? "#C4442C" : undefined }}>{overdue}</b>
+            <span className="eyebrow">Past due</span>
+          </button>
+        </div>
+        <button className="addbtn" onClick={() => openNew()}>+ Add item</button>
+      </div>
+
+      {problem && <div className="banner">{problem}</div>}
+
+      <div className="strip">
+        <button className="pill" data-on={filter.length === 0} onClick={() => setFilter([])}>All subjects</button>
+        {SUBJECTS.map((s) => (
+          <button key={s.id} className="pill" data-on={filter.includes(s.id)} onClick={() => toggleSubject(s.id)}>
+            <i className="dotc" style={{ "--c": s.color }} />{s.code}
+          </button>
+        ))}
+      </div>
+
+      <div className="shell">
+        <Spine
+          subjects={SUBJECTS} counts={openCounts} filter={filter}
+          onToggle={toggleSubject} onClear={() => setFilter([])} onAdd={(id) => openNew(id)}
+        />
+
+        <div className="main">
+          <div className="navbar">
+            {view === "month" && (
+              <>
+                <button className="navbtn" onClick={() => setMonthIx((i) => i - 1)} disabled={monthIx === 0} aria-label="Previous month">&larr;</button>
+                <button className="navbtn" onClick={() => setMonthIx((i) => i + 1)} disabled={monthIx === SCHOOL_MONTHS.length - 1} aria-label="Next month">&rarr;</button>
+              </>
+            )}
+            <div className="mtitle">
+              {view === "month" ? <>{MONTH_NAMES[m]} <i>{y}</i></> : range.title}
+            </div>
+            <div style={{ flex: "1 1 auto" }} />
+            <button className="ghost" data-on={hideDone} onClick={() => setHideDone((v) => !v)}>Hide done</button>
+          </div>
+
+          <div className="navbar">
+            <div className="seg">
+              <button data-on={view === "month"} onClick={() => setView("month")}>Month</button>
+              {RANGE_IDS.map((id) => (
+                <button key={id} data-on={view === id} onClick={() => setView(id)}>
+                  {rangeFor(id, today).tab}<b>{rangeCounts[id] || 0}</b>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <p className="msub">
+            {view === "month"
+              ? `Click any day to see what's due and add something for it`
+              : range.sub}
+          </p>
+
+          {!loaded ? (
+            <div className="listwrap"><p className="blank">Opening the planner&hellip;</p></div>
+          ) : view === "month" ? (
+            <MonthGrid y={y} m={m} byDate={byDate} today={today} selected={selected} onPick={pickDay} />
+          ) : (
+            <RangeList
+              items={rangeItems} today={today} empty={range.empty}
+              onToggle={toggleDone} onEdit={openEdit} onAdd={() => openNew()}
+            />
+          )}
+
+          <div className="foot">
+            <span>Entries are shared &mdash; everyone who opens this planner sees and edits the same list.</span>
+            <button className="mini" onClick={refresh}>Refresh</button>
+          </div>
+        </div>
+
+        <DayRail
+          open={railOpen} date={selected} items={selected ? byDate[selected] || [] : []}
+          today={today} onClose={() => setRailOpen(false)}
+          onToggle={toggleDone} onEdit={openEdit} onAdd={() => openNew(null, selected)}
+        />
+      </div>
+
+      {editing && (
+        <EntryForm
+          draft={editing} onChange={setEditing}
+          onSave={saveDraft} onCancel={() => setEditing(null)} onDelete={removeItem}
+        />
+      )}
+    </div>
+  );
+}
+
+/* --------------------------- report-card spine --------------------- */
+
+function Spine({ subjects, counts, filter, onToggle, onClear, onAdd }) {
+  const row = (s) => {
+    const n = counts[s.id] || 0;
+    return (
+      <div key={s.id} className="subjrow" style={{ "--c": s.color }} data-on={filter.includes(s.id)}>
+        <button className="subjmain" onClick={() => onToggle(s.id)} aria-pressed={filter.includes(s.id)}>
+          <div className="nm">{s.name}</div>
+          <div className="ct">
+            <i className="dotc" />
+            <em>{n === 0 ? "Nothing due" : n === 1 ? "1 coming up" : `${n} coming up`}</em>
+          </div>
+        </button>
+        <button className="subjadd" onClick={() => onAdd(s.id)} title={`Add ${s.name} item`} aria-label={`Add ${s.name} item`}>+</button>
+      </div>
+    );
+  };
+
+  const laStart = subjects.findIndex((x) => x.group === "LA");
+  const before = subjects.filter((s, i) => !s.group && i < laStart);
+  const la = subjects.filter((s) => s.group === "LA");
+  const after = subjects.filter((s, i) => !s.group && i > laStart);
+
+  return (
+    <aside className="spine">
+      <div className="spine-hd" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <span className="eyebrow">Subjects &mdash; click + to add</span>
+        {filter.length > 0 && <button className="mini" onClick={onClear}>Show all</button>}
+      </div>
+
+      <div className="spine-inset">
+        <div className="cardgrid">
+          {before.map(row)}
+          <div className="lagroup">
+            <div className="labracket" aria-hidden="true"><span>Language Arts</span></div>
+            {la.map(row)}
+          </div>
+          {after.map(row)}
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+/* ------------------------------ calendar --------------------------- */
+
+function MonthGrid({ y, m, byDate, today, selected, onPick }) {
+  const lead = firstDow(y, m);
+  const total = daysInMonth(y, m);
+  const cells = [];
+  for (let i = 0; i < lead; i++) cells.push(null);
+  for (let d = 1; d <= total; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  return (
+    <div className="cal">
+      {DOW.map((d) => <div className="dow" key={d}>{d}</div>)}
+      {cells.map((d, ix) => {
+        if (d === null) return <div className="cell" data-blank="true" key={`b${ix}`} />;
+        const k = key(y, m, d);
+        const list = byDate[k] || [];
+        const wd = new Date(y, m, d).getDay();
+        return (
+          <button
+            key={k} className="cell" onClick={() => onPick(k)}
+            data-today={k === today} data-sel={k === selected} data-weekend={wd === 0 || wd === 6}
+            aria-label={`${longDate(k)} — ${list.length} item${list.length === 1 ? "" : "s"}`}
+          >
+            <span className="dnum">{d}</span>
+            <div className="chips">
+              {list.slice(0, 3).map((it) => {
+                const s = SUBJ[it.subject];
+                return (
+                  <span key={it.id} className="chip" data-done={!!it.done}
+                    style={{ "--c": s.color, "--bg": hexA(s.color, 0.1) }}>
+                    <span className="mk">{TYPE[it.type].mark}</span>
+                    <span className="tx">{it.title}</span>
+                  </span>
+                );
+              })}
+              {list.length > 3 && <span className="more">+{list.length - 3} more</span>}
+            </div>
+            <div className="dots">
+              {list.slice(0, 8).map((it) => <i key={it.id} style={{ "--c": SUBJ[it.subject].color, opacity: it.done ? 0.35 : 1 }} />)}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ------------------------------ range list ------------------------- */
+
+function RangeList({ items, today, empty, onToggle, onEdit, onAdd }) {
+  const groups = useMemo(() => {
+    const m = {};
+    for (const i of items) (m[i.due] = m[i.due] || []).push(i);
+    return Object.keys(m).sort().map((k) => [k, m[k]]);
+  }, [items]);
+
+  if (groups.length === 0)
+    return (
+      <div className="listwrap">
+        <p className="blank">{empty} <button className="mini" onClick={onAdd}>Add an item</button></p>
+      </div>
+    );
+
+  return (
+    <div className="listwrap">
+      {groups.map(([k, list]) => {
+        const late = k < today;
+        const diff = daysBetween(today, k);
+        const rel = k === today ? "Today" : diff === 1 ? "Tomorrow" : late ? `${Math.abs(diff)}d ago` : `in ${diff}d`;
+        return (
+          <section className="daygroup" key={k}>
+            <h4 data-late={late}><span>{longDate(k)}</span><u>{rel}</u></h4>
+            {list.map((it) => <ItemRow key={it.id} it={it} onToggle={onToggle} onEdit={onEdit} />)}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ------------------------------ item row --------------------------- */
+
+function ItemRow({ it, onToggle, onEdit }) {
+  const s = SUBJ[it.subject];
+  return (
+    <div className="row" data-done={!!it.done}>
+      <button className="check" data-on={!!it.done} onClick={() => onToggle(it)}
+        aria-label={it.done ? "Mark as not done" : "Mark as done"}>{it.done ? "\u2713" : ""}</button>
+      <div className="body">
+        <div className="ttl serif">{it.title}</div>
+        <div className="tags">
+          <span className="stag" style={{ "--c": s.color }}>{s.code}</span>
+          <span className="ttag">{TYPE[it.type].mark} {TYPE[it.type].label}</span>
+          {it.addedBy && <span className="ttag">&middot; added by {it.addedBy}</span>}
+          <button className="mini" onClick={() => onEdit(it)}>Edit</button>
+        </div>
+        {it.details && <div className="note serif">{it.details}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------ day rail --------------------------- */
+
+function DayRail({ open, date, items, today, onClose, onToggle, onEdit, onAdd }) {
+  return (
+    <aside className="rail" data-open={open}>
+      <div className="railhd">
+        <span className="eyebrow">
+          {date ? (date === today ? "Today" : date < today ? "Past" : `In ${daysBetween(today, date)} days`) : "Pick a day"}
+        </span>
+        <h3>{date ? longDate(date) : "No day selected"}</h3>
+        <button className="railclose" onClick={onClose} aria-label="Close">&times;</button>
+      </div>
+
+      {!date ? (
+        <p className="empty">Tap any date on the calendar to see what&rsquo;s due.</p>
+      ) : items.length === 0 ? (
+        <p className="empty">Nothing due this day.</p>
+      ) : (
+        <div>{items.map((it) => <ItemRow key={it.id} it={it} onToggle={onToggle} onEdit={onEdit} />)}</div>
+      )}
+
+      {date && <button className="railadd" onClick={onAdd}>+ Add for {longDate(date)}</button>}
+    </aside>
+  );
+}
+
+/* ------------------------------ entry form ------------------------- */
+
+function EntryForm({ draft, onChange, onSave, onCancel, onDelete }) {
+  const [err, setErr] = useState("");
+  const titleRef = useRef(null);
+  const today = todayKey();
+
+  useEffect(() => { if (titleRef.current) titleRef.current.focus(); }, []);
+  useEffect(() => {
+    const esc = (e) => { if (e.key === "Escape") onCancel(); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onCancel]);
+
+  const set = (patch) => onChange({ ...draft, ...patch });
+
+  const quick = [
+    ["Tomorrow", addDays(today, 1)],
+    ["Friday", nextDow(today, 5)],
+    ["Next Monday", nextDow(today, 1)],
+  ].filter(([, v], i, a) => a.findIndex(([, w]) => w === v) === i);
+
+  const submit = () => {
+    if (!draft.title.trim()) return setErr("Give it a name, like \u201CChapter 4 problems\u201D.");
+    if (!draft.due) return setErr("Pick the day it's due.");
+    if (draft.due < YEAR_START || draft.due > YEAR_END) return setErr("Pick a date inside the 2026\u20132027 school year.");
+    onSave({ ...draft, title: draft.title.trim(), details: draft.details.trim() });
+  };
+
+  return (
+    <div className="scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Planner item">
+        <header>
+          <h3>{draft.id ? "Edit item" : "New item"}</h3>
+          <button className="cancel" style={{ padding: "4px 8px" }} onClick={onCancel}>Close</button>
+        </header>
+
+        <div className="bd">
+          <div>
+            <div className="step"><u>1</u><span className="eyebrow">Subject</span></div>
+            <div className="opts">
+              {SUBJECTS.map((s) => (
+                <button key={s.id} className="opt" data-on={draft.subject === s.id}
+                  style={{ "--c": s.color }} onClick={() => set({ subject: s.id })}>
+                  <i className="dotc" />{s.code}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="step"><u>2</u><span className="eyebrow">What is it?</span></div>
+            <input ref={titleRef} type="text" value={draft.title} placeholder="Chapter 4 problems 1–20"
+              onChange={(e) => set({ title: e.target.value })}
+              onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+            <div className="opts" style={{ marginTop: 7 }}>
+              {TYPES.map((t) => (
+                <button key={t.id} className="opt" data-on={draft.type === t.id} onClick={() => set({ type: t.id })}>
+                  {t.mark} {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="step"><u>3</u><span className="eyebrow">When is it due?</span></div>
+            <input type="date" value={draft.due} min={YEAR_START} max={YEAR_END}
+              onChange={(e) => set({ due: e.target.value })} />
+            <div className="quick">
+              {quick.map(([lbl, val]) => (
+                <button key={lbl} onClick={() => set({ due: val })}>{lbl} &middot; {shortDate(val)}</button>
+              ))}
+            </div>
+            {draft.due && (
+              <div style={{ marginTop: 7, fontSize: 12.5, color: "var(--muted)", fontWeight: 700 }}>
+                Due {longDate(draft.due)}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="step"><u>4</u><span className="eyebrow">Details (optional)</span></div>
+            <textarea value={draft.details} placeholder="Chapters covered, what to bring, how it's graded…"
+              onChange={(e) => set({ details: e.target.value })} />
+            <div className="opts" style={{ marginTop: 9 }}>
+              <span className="ttag" style={{ alignSelf: "center" }}>Added by</span>
+              {PEOPLE.map((p) => (
+                <button key={p} className="opt" data-on={draft.addedBy === p} onClick={() => set({ addedBy: p })}>{p}</button>
+              ))}
+            </div>
+          </div>
+
+          {err && <div className="err">{err}</div>}
+        </div>
+
+        <footer>
+          <button className="save" onClick={submit}>{draft.id ? "Save changes" : "Add to planner"}</button>
+          {draft.id && <button className="del" onClick={() => onDelete(draft.id)}>Delete</button>}
+        </footer>
+      </div>
+    </div>
+  );
+}
