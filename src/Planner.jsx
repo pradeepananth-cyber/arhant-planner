@@ -7,14 +7,17 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
  * ------------------------------------------------------------------ */
 
 const SUBJECTS = [
-  { id: "religion", name: "Religion",               code: "REL",   color: "#6D4AA6" },
-  { id: "math",     name: "Mathematics",            code: "MATH",  color: "#C4442C" },
-  { id: "lit",      name: "Literature/Reading",     code: "LIT",   color: "#1B6E4F", group: "LA" },
-  { id: "english",  name: "English",                code: "ENG",   color: "#2A5CA8", group: "LA" },
-  { id: "spelling", name: "Spelling/Vocabulary",    code: "SPELL", color: "#B0761A", group: "LA" },
-  { id: "science",  name: "Science/Health",         code: "SCI",   color: "#0F7B84" },
-  { id: "history",  name: "History/Social Science", code: "HIST",  color: "#8C3A5E" },
+  { id: "religion", name: "Religion",               code: "REL",   color: "#6D4AA6", teacher: "" },
+  { id: "math",     name: "Mathematics",            code: "MATH",  color: "#C4442C", teacher: "Hill" },
+  { id: "lit",      name: "Literature/Reading",     code: "LIT",   color: "#1B6E4F", teacher: "Kensic",    group: "LA" },
+  { id: "english",  name: "English",                code: "ENG",   color: "#2A5CA8", teacher: "DeBrunner", group: "LA" },
+  { id: "spelling", name: "Spelling/Vocabulary",    code: "SPELL", color: "#B0761A", teacher: "Kennedy",   group: "LA" },
+  { id: "science",  name: "Science/Health",         code: "SCI",   color: "#0F7B84", teacher: "Murphy" },
+  { id: "history",  name: "History/Social Science", code: "HIST",  color: "#8C3A5E", teacher: "Kennedy" },
 ];
+
+const teacherOf = (s) => (s.teacher ? ` (${s.teacher})` : "");
+const codeWithTeacher = (s) => `${s.code}${teacherOf(s)}`;
 
 const TYPES = [
   { id: "assignment", label: "Assignment", mark: "\u25A0" },
@@ -127,7 +130,9 @@ async function localSave(doc) {
 
 const isSchoolDay = (k) => {
   const d = dowNum(k);
-  return d >= 1 && d <= 5;
+  if (d === 0 || d === 6) return false;
+  if (!inSchoolYear(k)) return false;
+  return !NO_SCHOOL[k];
 };
 
 const blankLog = () => ({ none: [], noSchool: false, by: "", updatedAt: "" });
@@ -141,6 +146,7 @@ function addressedOn(date, logs, items) {
 /* complete | partial | missing | noschool | none (nothing to show) */
 function logStatus(date, logs, items, today) {
   const log = logs[date];
+  if (NO_SCHOOL[date]) return "holiday";
   if (log && log.noSchool) return "noschool";
   const n = addressedOn(date, logs, items).size;
   if (n >= SUBJECTS.length) return "complete";
@@ -149,7 +155,7 @@ function logStatus(date, logs, items, today) {
   return "missing";
 }
 
-const LOG_MARK = { complete: "\u2713", partial: "\u00B7", missing: "!", noschool: "\u2013" };
+const LOG_MARK = { complete: "\u2713", partial: "\u00B7", missing: "!", noschool: "\u2013", holiday: "\u2013" };
 
 const SYNC_TEXT = {
   loading: "Loading",
@@ -205,6 +211,58 @@ const daysBetween = (a, b) => {
   return Math.round((Date.UTC(B.y, B.m, B.d) - Date.UTC(A.y, A.m, A.d)) / 86400000);
 };
 
+/* ------------------- St. Gabriel School, SF 2026-27 ----------------- *
+ * Taken from the printed school calendar. Days students don't attend,
+ * and days that dismiss early. Edit these two tables if the school
+ * changes anything mid-year — nothing else needs to change.
+ * -------------------------------------------------------------------- */
+
+const SCHOOL_FIRST_DAY = "2026-08-17";
+const SCHOOL_LAST_DAY = "2027-06-04";
+
+const NO_SCHOOL_SPANS = [
+  ["2026-09-07", null,         "Labor Day"],
+  ["2026-10-02", null,         "Teacher vacation day"],
+  ["2026-10-12", null,         "Indigenous Peoples' Day"],
+  ["2026-11-09", null,         "Veterans Day observed"],
+  ["2026-11-23", "2026-11-27", "Thanksgiving"],
+  ["2026-12-21", "2026-12-31", "Christmas holidays"],
+  ["2027-01-01", "2027-01-03", "New Year's holiday"],
+  ["2027-01-18", null,         "Martin Luther King Jr. Day"],
+  ["2027-02-15", null,         "Presidents' Day"],
+  ["2027-03-26", null,         "Good Friday"],
+  ["2027-03-29", "2027-04-02", "Easter break"],
+  ["2027-04-30", null,         "Pastor's Holiday"],
+  ["2027-05-31", null,         "Memorial Day"],
+];
+
+/* Early dismissal — worth seeing when planning pickup. */
+const SHORT_DAYS = {
+  "2026-08-17": "First day · 12pm",
+  "2026-08-18": "Minimum day · 12pm",
+  "2026-09-14": "Educators PD Day · 12pm",
+  "2026-09-28": "Minimum day · 12pm",
+  "2026-10-06": "P-T conferences · 12pm",
+  "2026-10-07": "P-T conferences · 12pm",
+  "2026-10-08": "P-T conferences · 12pm",
+  "2026-10-09": "Minimum day · 12pm",
+  "2026-10-26": "Minimum day · 12pm",
+  "2026-10-30": "Halloween · 12pm",
+  "2026-11-20": "Minimum day · 12pm",
+  "2026-12-18": "Minimum day · 12pm",
+  "2027-01-25": "Educators PD Day · 12pm",
+  "2027-02-22": "Minimum day · 12pm",
+  "2027-02-25": "Spring P-T conferences · 12pm",
+  "2027-02-26": "Spring P-T conferences · 12pm",
+  "2027-03-15": "Educators PD Day · 12pm",
+  "2027-03-25": "Holy Thursday · 12pm",
+  "2027-04-26": "Minimum day · 12pm",
+  "2027-05-24": "Minimum day · 12pm",
+  "2027-06-02": "Minimum day · 12pm",
+  "2027-06-03": "Minimum day · 12pm",
+  "2027-06-04": "Last day · 10am",
+};
+
 /* School year window: August 2026 through the first week of June 2027 */
 const SCHOOL_MONTHS = [
   [2026, 7], [2026, 8], [2026, 9], [2026, 10], [2026, 11],
@@ -212,6 +270,18 @@ const SCHOOL_MONTHS = [
 ];
 const YEAR_START = "2026-08-01";
 const YEAR_END = "2027-06-30";
+
+const NO_SCHOOL = (() => {
+  const map = {};
+  for (const [from, to, label] of NO_SCHOOL_SPANS) {
+    let k = from;
+    const last = to || from;
+    while (k <= last) { map[k] = label; k = addDays(k, 1); }
+  }
+  return map;
+})();
+
+const inSchoolYear = (k) => k >= SCHOOL_FIRST_DAY && k <= SCHOOL_LAST_DAY;
 
 /* ------------------------------ ranges ----------------------------- */
 
@@ -292,6 +362,8 @@ const CSS = `
 }
 .pl .addbtn2:hover { background: var(--soft); }
 .pl .addbtn[data-done="true"] { background: #1B6E4F; }
+.pl .addbtn[data-off="true"] { background: var(--card); color: var(--muted); border: 2px solid var(--faint); }
+.pl .addbtn[data-off="true"]:hover { background: var(--soft); }
 .pl .addbtn[data-done="true"]:hover { background: #175C42; }
 
 .lg {
@@ -308,6 +380,8 @@ const CSS = `
 .legend { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 2px 0; font-size: 11px; color: var(--muted); font-weight: 600; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .legend .lg { position: static; }
+.legend .sw { width: 15px; height: 15px; display: block; border: 1.5px solid var(--faint); background: #D4D8E2; }
+.legend .sb { width: 15px; height: 4px; display: block; background: #B0761A; }
 
 .modal.wide { max-width: 640px; max-height: 88vh; display: flex; flex-direction: column; }
 .modal.wide header { flex: none; align-items: flex-start; }
@@ -358,6 +432,7 @@ const CSS = `
 .pl .subjadd { flex: none; width: 30px; background: none; border: 0; border-left: 1px solid var(--faint); font-size: 15px; font-weight: 800; color: var(--muted); line-height: 1; }
 .pl .subjadd:hover { background: var(--ink); color: #fff; }
 .subjrow .nm { font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: -.01em; line-height: 1.15; }
+.nm em, .lname em { font-style: normal; font-weight: 600; color: var(--muted); text-transform: none; letter-spacing: 0; }
 .subjrow .ct { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
 .dotc { width: 8px; height: 8px; background: var(--c); flex: none; }
 .subjrow .ct em { font-style: normal; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; color: var(--muted); text-transform: uppercase; }
@@ -405,6 +480,25 @@ const CSS = `
 .dow { background: var(--ink); color: #fff; text-align: center; padding: 5px 0; font-size: 10px; font-weight: 700; letter-spacing: .12em; }
 .cell { background: var(--card); min-height: 106px; border: 0; text-align: left; padding: 4px 4px 6px; display: flex; flex-direction: column; gap: 3px; position: relative; }
 .cell[data-blank="true"] { background: #DDE0E8; cursor: default; }
+.cell[data-hol="true"] { background: #D4D8E2; }
+.cell[data-hol="true"] .dnum { color: #7E828F; }
+.cell[data-off="true"] { background: #E0E3EA; }
+.cell[data-off="true"] .dnum { color: #9498A4; }
+.holname {
+  font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+  color: #5C6070; line-height: 1.15; padding: 1px 3px; overflow-wrap: anywhere;
+}
+.cell[data-short="true"]::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: #B0761A;
+}
+.shortnote {
+  display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: #8a5c10; border-bottom: 2px solid #B0761A; padding-bottom: 1px;
+}
+.holnote {
+  display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--muted);
+}
 .cell:hover:not([data-blank="true"]) { box-shadow: inset 0 0 0 3px var(--faint); }
 .cell[data-sel="true"] { box-shadow: inset 0 0 0 3px var(--ink); }
 .cell .dnum { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; padding: 2px 2px 0; }
@@ -820,12 +914,15 @@ export default function Planner() {
             <span className="eyebrow">Missed logs</span>
           </button>
         </div>
-        <button className="addbtn" onClick={() => setLogDate(today)} data-done={todayStatus === "complete"}>
-          {todayStatus === "complete"
-            ? "\u2713 Today logged"
-            : todayStatus === "noschool"
-              ? "No school today"
-              : `Log today \u00B7 ${todayDone}/${SUBJECTS.length}`}
+        <button className="addbtn" onClick={() => setLogDate(today)}
+          data-done={todayStatus === "complete"} data-off={todayStatus === "holiday" || todayStatus === "noschool"}>
+          {todayStatus === "holiday"
+            ? `No school \u00B7 ${NO_SCHOOL[today]}`
+            : todayStatus === "complete"
+              ? "\u2713 Today logged"
+              : todayStatus === "noschool"
+                ? "No school today"
+                : `Log today \u00B7 ${todayDone}/${SUBJECTS.length}`}
         </button>
         <button className="addbtn2" onClick={() => openNew()}>+ Add item</button>
       </div>
@@ -846,7 +943,7 @@ export default function Planner() {
         <button className="pill" data-on={filter.length === 0} onClick={() => setFilter([])}>All subjects</button>
         {SUBJECTS.map((s) => (
           <button key={s.id} className="pill" data-on={filter.includes(s.id)} onClick={() => toggleSubject(s.id)}>
-            <i className="dotc" style={{ "--c": s.color }} />{s.code}
+            <i className="dotc" style={{ "--c": s.color }} />{codeWithTeacher(s)}
           </button>
         ))}
       </div>
@@ -907,7 +1004,9 @@ export default function Planner() {
               <span><i className="lg" data-st="complete">{LOG_MARK.complete}</i> logged</span>
               <span><i className="lg" data-st="partial">{LOG_MARK.partial}</i> started</span>
               <span><i className="lg" data-st="missing">{LOG_MARK.missing}</i> not logged</span>
-              <span><i className="lg" data-st="noschool">{LOG_MARK.noschool}</i> no school</span>
+              <span><i className="lg" data-st="noschool">{LOG_MARK.noschool}</i> marked no school</span>
+              <span><i className="sw" /> school holiday</span>
+              <span><i className="sb" /> early dismissal</span>
             </div>
           )}
 
@@ -966,7 +1065,7 @@ function Spine({ subjects, counts, filter, onToggle, onClear, onAdd }) {
     return (
       <div key={s.id} className="subjrow" style={{ "--c": s.color }} data-on={filter.includes(s.id)}>
         <button className="subjmain" onClick={() => onToggle(s.id)} aria-pressed={filter.includes(s.id)}>
-          <div className="nm">{s.name}</div>
+          <div className="nm">{s.name}{s.teacher && <em> ({s.teacher})</em>}</div>
           <div className="ct">
             <i className="dotc" />
             <em>{n === 0 ? "Nothing due" : n === 1 ? "1 coming up" : `${n} coming up`}</em>
@@ -1022,14 +1121,20 @@ function MonthGrid({ y, m, byDate, today, selected, onPick, logs, allItems, onOp
         const list = byDate[k] || [];
         const wd = new Date(y, m, d).getDay();
         const st = logStatus(k, logs, allItems, today);
+        const hol = NO_SCHOOL[k];
+        const off = !hol && !inSchoolYear(k);
+        const short = SHORT_DAYS[k];
         return (
           <button
             key={k} className="cell" onClick={() => onPick(k)}
             data-today={k === today} data-sel={k === selected} data-weekend={wd === 0 || wd === 6}
-            aria-label={`${longDate(k)} — ${list.length} item${list.length === 1 ? "" : "s"}`}
+            data-hol={Boolean(hol)} data-off={off} data-short={Boolean(short)}
+            title={hol || short || undefined}
+            aria-label={`${longDate(k)}${hol ? ` — ${hol}` : ""} — ${list.length} item${list.length === 1 ? "" : "s"}`}
           >
             <span className="dnum">{d}</span>
-            {st !== "none" && (
+            {hol && <span className="holname">{hol}</span>}
+            {st !== "none" && !hol && (
               <span className="lg" data-st={st}
                 title={{ complete: "Logged", partial: "Log started", missing: "Not logged", noschool: "No school" }[st]}
                 onClick={(e) => { e.stopPropagation(); onOpenLog(k); }}>
@@ -1041,6 +1146,7 @@ function MonthGrid({ y, m, byDate, today, selected, onPick, logs, allItems, onOp
                 const s = SUBJ[it.subject];
                 return (
                   <span key={it.id} className="chip" data-done={!!it.done}
+                    title={`${s.name}${teacherOf(s)} — ${it.title}`}
                     style={{ "--c": s.color, "--bg": hexA(s.color, 0.1) }}>
                     <span className="mk">{TYPE[it.type].mark}</span>
                     <span className="tx">{it.title}</span>
@@ -1104,6 +1210,7 @@ function ItemRow({ it, onToggle, onEdit, showDue }) {
         <div className="ttl serif">{it.title}</div>
         <div className="tags">
           <span className="stag" style={{ "--c": s.color }}>{s.code}</span>
+          {s.teacher && <span className="ttag">{s.teacher}</span>}
           <span className="ttag">{TYPE[it.type].mark} {TYPE[it.type].label}</span>
           {showDue && <span className="ttag">&middot; due {longDate(it.due)}</span>}
           {it.addedBy && <span className="ttag">&middot; added by {it.addedBy}</span>}
@@ -1125,6 +1232,8 @@ function DayRail({ open, date, items, today, onClose, onToggle, onEdit, onAdd, o
           {date ? (date === today ? "Today" : date < today ? "Past" : `In ${daysBetween(today, date)} days`) : "Pick a day"}
         </span>
         <h3>{date ? longDate(date) : "No day selected"}</h3>
+        {date && NO_SCHOOL[date] && <div className="holnote" style={{ marginTop: 5 }}>{NO_SCHOOL[date]} &middot; no school</div>}
+        {date && !NO_SCHOOL[date] && SHORT_DAYS[date] && <div className="shortnote" style={{ marginTop: 5 }}>{SHORT_DAYS[date]}</div>}
         <button className="railclose" onClick={onClose} aria-label="Close">&times;</button>
       </div>
 
@@ -1137,7 +1246,7 @@ function DayRail({ open, date, items, today, onClose, onToggle, onEdit, onAdd, o
       )}
 
       {date && <button className="railadd" onClick={onAdd}>+ Add item due {longDate(date)}</button>}
-      {date && (
+      {date && !NO_SCHOOL[date] && (
         <button className="railadd" onClick={onOpenLog}>
           {logStatusText === "complete" ? "\u2713 View this day's log" : "Open this day's log"}
         </button>
@@ -1157,6 +1266,8 @@ function DailyLog({ date, logs, items, today, by, setBy, onClose, onGo,
   }, [onClose]);
 
   const log = { ...blankLog(), ...(logs[date] || {}) };
+  const holiday = NO_SCHOOL[date];
+  const closed = Boolean(holiday) || log.noSchool;
   const done = addressedOn(date, logs, items);
   const remaining = SUBJECTS.filter((s) => !done.has(s.id));
   const pct = Math.round((done.size / SUBJECTS.length) * 100);
@@ -1186,20 +1297,24 @@ function DailyLog({ date, logs, items, today, by, setBy, onClose, onGo,
         </header>
 
         <div className="progress">
-          <div className="bar" data-full={finished}><i style={{ width: `${pct}%` }} /></div>
+          {!closed && <div className="bar" data-full={finished}><i style={{ width: `${pct}%` }} /></div>}
           <span className="ptext">
-            {log.noSchool ? "Marked as no school"
+            {holiday ? `${holiday} \u00B7 no school`
+              : log.noSchool ? "Marked as no school"
               : finished ? `All ${SUBJECTS.length} subjects checked`
               : `${done.size} of ${SUBJECTS.length} subjects checked`}
           </span>
-          <button className="ghost" data-on={log.noSchool} onClick={() => onNoSchool(date, !log.noSchool)}>
-            {log.noSchool ? "There was school" : "No school"}
-          </button>
+          {!holiday && (
+            <button className="ghost" data-on={log.noSchool} onClick={() => onNoSchool(date, !log.noSchool)}>
+              {log.noSchool ? "There was school" : "No school"}
+            </button>
+          )}
+          {!closed && SHORT_DAYS[date] && <span className="shortnote">{SHORT_DAYS[date]}</span>}
         </div>
 
-        {log.noSchool ? (
+        {closed ? (
           <p className="blank" style={{ borderTop: "2px solid var(--faint)" }}>
-            Nothing to log for this day.
+            {holiday ? `${holiday} — school is closed, so there is nothing to log.` : "Nothing to log for this day."}
           </p>
         ) : (
           <div className="logbody">
@@ -1211,7 +1326,7 @@ function DailyLog({ date, logs, items, today, by, setBy, onClose, onGo,
                 <div className="logrow" key={s.id} data-state={state} style={{ "--c": s.color }}>
                   <div className="lhead">
                     <span className="stag">{s.code}</span>
-                    <span className="lname">{s.name}</span>
+                    <span className="lname">{s.name}{s.teacher && <em> ({s.teacher})</em>}</span>
                     <span className="lstate">
                       {state === "items" ? `${mine.length} announced` : state === "none" ? "\u2713 Nothing" : "Not checked"}
                     </span>
@@ -1234,12 +1349,12 @@ function DailyLog({ date, logs, items, today, by, setBy, onClose, onGo,
         )}
 
         <footer>
-          {!log.noSchool && remaining.length > 0 && (
+          {!closed && remaining.length > 0 && (
             <button className="save" onClick={() => onRest(date)}>
               Nothing else announced ({remaining.length} left)
             </button>
           )}
-          {(log.noSchool || remaining.length === 0) && (
+          {(closed || remaining.length === 0) && (
             <button className="save" onClick={onClose}>Done</button>
           )}
           <div className="opts" style={{ flex: "0 0 auto" }}>
@@ -1302,7 +1417,7 @@ function EntryForm({ draft, onChange, onSave, onCancel, onDelete }) {
               {SUBJECTS.map((s) => (
                 <button key={s.id} className="opt" data-on={draft.subject === s.id}
                   style={{ "--c": s.color }} onClick={() => set({ subject: s.id })}>
-                  <i className="dotc" />{s.code}
+                  <i className="dotc" />{codeWithTeacher(s)}
                 </button>
               ))}
             </div>
