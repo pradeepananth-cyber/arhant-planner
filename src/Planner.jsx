@@ -997,7 +997,10 @@ export default function Planner() {
               {view === "month" ? <>{MONTH_NAMES[m]} <i>{y}</i></> : range.title}
             </div>
             <div style={{ flex: "1 1 auto" }} />
-            <button className="ghost" data-on={hideDone} onClick={() => setHideDone((v) => !v)}>Hide finished</button>
+            <button className="ghost" data-on={hideDone} aria-pressed={hideDone}
+              onClick={() => setHideDone((v) => !v)}>
+              {hideDone ? "Show finished" : "Hide finished"}
+            </button>
           </div>
 
           <div className="navbar">
