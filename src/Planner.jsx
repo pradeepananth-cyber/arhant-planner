@@ -349,6 +349,7 @@ const CSS = `
 .tally { display: flex; gap: 14px; align-items: flex-start; }
 .tally button, .tally div { background: none; border: 0; padding: 0; text-align: left; }
 .tally b { font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; display: block; line-height: 1.1; }
+.tally b em { font-style: normal; font-size: 14px; font-weight: 700; color: var(--muted); }
 .tally span { display: block; }
 .tally button:hover .eyebrow { color: var(--ink); text-decoration: underline; }
 .sync { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
@@ -781,9 +782,16 @@ export default function Planner() {
   };
 
   /* ---- derived ---- */
+  // Subject filter only. Counting uses this, so hiding finished work
+  // never changes the denominators.
+  const inScope = useMemo(
+    () => items.filter((i) => filter.length === 0 || filter.includes(i.subject)),
+    [items, filter]
+  );
+
   const visible = useMemo(
-    () => items.filter((i) => (filter.length === 0 || filter.includes(i.subject)) && (!hideDone || !i.done)),
-    [items, filter, hideDone]
+    () => (hideDone ? inScope.filter((i) => !i.done) : inScope),
+    [inScope, hideDone]
   );
 
   const byDate = useMemo(() => {
@@ -801,14 +809,18 @@ export default function Planner() {
     return c;
   }, [items, today]);
 
+  // finished / total, so a completed assignment still shows up.
   const rangeCounts = useMemo(() => {
     const c = {};
     for (const id of RANGE_IDS) {
       const r = rangeFor(id, today);
-      c[id] = visible.filter((i) => inRange(i, r) && !i.done).length;
+      const inR = inScope.filter((i) => inRange(i, r));
+      c[id] = { done: inR.filter((i) => i.done).length, total: inR.length };
     }
     return c;
-  }, [visible, today]);
+  }, [inScope, today]);
+
+  const ratio = (id) => rangeCounts[id] || { done: 0, total: 0 };
 
   const todayDone = useMemo(() => addressedOn(today, logs, items).size, [logs, items, today]);
   const todayStatus = useMemo(() => logStatus(today, logs, items, today), [logs, items, today]);
@@ -825,11 +837,7 @@ export default function Planner() {
     return out.reverse();
   }, [logs, items, today]);
 
-  const overdue = useMemo(() => visible.filter((i) => !i.done && i.due < today).length, [visible, today]);
-  const dueTomorrow = useMemo(() => {
-    const t = addDays(today, 1);
-    return visible.filter((i) => !i.done && i.due === t).length;
-  }, [visible, today]);
+  const overdue = useMemo(() => inScope.filter((i) => !i.done && i.due < today).length, [inScope, today]);
 
   /* ---- actions ---- */
   const openNew = (subject, due, announced) =>
@@ -912,11 +920,20 @@ export default function Planner() {
         </span>
         <div className="spacer" />
         <div className="tally">
-          <button onClick={() => setView("tomorrow")}>
-            <b>{dueTomorrow}</b><span className="eyebrow">Tomorrow</span>
+          <button onClick={() => setView("tomorrow")}
+            title={`${ratio("tomorrow").done} of ${ratio("tomorrow").total} finished`}>
+            <b>{ratio("tomorrow").done}<em>/{ratio("tomorrow").total}</em></b>
+            <span className="eyebrow">Tomorrow</span>
           </button>
-          <button onClick={() => setView("week")}>
-            <b>{rangeCounts.week || 0}</b><span className="eyebrow">This week</span>
+          <button onClick={() => setView("week")}
+            title={`${ratio("week").done} of ${ratio("week").total} finished`}>
+            <b>{ratio("week").done}<em>/{ratio("week").total}</em></b>
+            <span className="eyebrow">This week</span>
+          </button>
+          <button onClick={() => setView("four")}
+            title={`${ratio("four").done} of ${ratio("four").total} finished`}>
+            <b>{ratio("four").done}<em>/{ratio("four").total}</em></b>
+            <span className="eyebrow">4 weeks</span>
           </button>
           <button onClick={() => setView("overdue")}>
             <b style={{ color: overdue ? "#C4442C" : undefined }}>{overdue}</b>
@@ -987,8 +1004,9 @@ export default function Planner() {
             <div className="seg">
               <button data-on={view === "month"} onClick={() => setView("month")}>Month</button>
               {RANGE_IDS.map((id) => (
-                <button key={id} data-on={view === id} onClick={() => setView(id)}>
-                  {rangeFor(id, today).tab}<b>{rangeCounts[id] || 0}</b>
+                <button key={id} data-on={view === id} onClick={() => setView(id)}
+                  title={`${ratio(id).done} of ${ratio(id).total} finished`}>
+                  {rangeFor(id, today).tab}<b>{ratio(id).done}/{ratio(id).total}</b>
                 </button>
               ))}
             </div>
@@ -997,7 +1015,9 @@ export default function Planner() {
           <p className="msub">
             {view === "month"
               ? `Click any day to see what's due. Tick a box when homework is finished.`
-              : range.sub}
+              : view === "overdue"
+                ? range.sub
+                : `${range.sub} \u00B7 ${ratio(view).done} of ${ratio(view).total} finished`}
           </p>
 
           {!loaded ? (
