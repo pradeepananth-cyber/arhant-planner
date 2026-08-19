@@ -155,7 +155,9 @@ function logStatus(date, logs, items, today) {
   return "missing";
 }
 
-const LOG_MARK = { complete: "\u2713", partial: "\u00B7", missing: "!", noschool: "\u2013", holiday: "\u2013" };
+/* Deliberately no check marks here. A tick means "homework finished"
+   and nothing else in this app; the log uses a filled-in box instead. */
+const LOG_MARK = { complete: "", partial: "\u00B7", missing: "!", noschool: "\u2013", holiday: "\u2013" };
 
 const SYNC_TEXT = {
   loading: "Loading",
@@ -361,10 +363,12 @@ const CSS = `
   font-weight: 700; font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
 }
 .pl .addbtn2:hover { background: var(--soft); }
-.pl .addbtn[data-done="true"] { background: #1B6E4F; }
+/* Green means one thing in this app: homework that is finished.
+   A written log is not "done work", so it stays in plain ink. */
+.pl .addbtn[data-done="true"] { background: var(--card); color: var(--ink); border: 2px solid var(--rule); }
+.pl .addbtn[data-done="true"]:hover { background: var(--soft); }
 .pl .addbtn[data-off="true"] { background: var(--card); color: var(--muted); border: 2px solid var(--faint); }
 .pl .addbtn[data-off="true"]:hover { background: var(--soft); }
-.pl .addbtn[data-done="true"]:hover { background: #175C42; }
 
 .lg {
   position: absolute; top: 3px; right: 3px; width: 15px; height: 15px;
@@ -372,6 +376,7 @@ const CSS = `
   border: 1.5px solid var(--rule); background: var(--card); color: var(--ink);
 }
 .lg[data-st="complete"] { background: var(--ink); color: #fff; }
+.lg[data-st="complete"]::after { content: ""; width: 5px; height: 5px; background: #fff; }
 .lg[data-st="partial"] { border-style: dashed; }
 .lg[data-st="missing"] { border-color: #C4442C; color: #C4442C; }
 .lg[data-st="noschool"] { border-color: var(--faint); color: var(--faint); }
@@ -389,7 +394,7 @@ const CSS = `
 .progress { flex: none; display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-bottom: 2px solid var(--faint); flex-wrap: wrap; }
 .bar { flex: 1 1 120px; height: 12px; border: 2px solid var(--rule); background: var(--card); min-width: 90px; }
 .bar i { display: block; height: 100%; background: var(--ink); transition: width .2s ease; }
-.bar[data-full="true"] i { background: #1B6E4F; }
+.bar[data-full="true"] i { background: var(--ink); }
 .ptext { font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .logbody { overflow-y: auto; flex: 1 1 auto; }
 .logrow { border-bottom: 2px solid var(--rule); padding: 9px 12px 11px; position: relative; }
@@ -540,14 +545,23 @@ const CSS = `
 .row:last-child { border-bottom: 0; }
 .row[data-done="true"] .ttl { text-decoration: line-through; color: var(--muted); }
 .check { width: 19px; height: 19px; flex: none; border: 2px solid var(--rule); background: var(--card); margin-top: 2px; font-size: 12px; line-height: 1; font-weight: 800; display: grid; place-items: center; }
-.check[data-on="true"] { background: var(--ink); color: #fff; }
+.check[data-on="true"] { background: #1B6E4F; border-color: #1B6E4F; color: #fff; }
 .row .body { flex: 1 1 auto; min-width: 0; }
 .row .ttl { font-size: 14.5px; font-weight: 600; line-height: 1.3; word-break: break-word; }
 .tags { display: flex; align-items: center; gap: 7px; margin-top: 3px; flex-wrap: wrap; }
 .stag { font-size: 9.5px; font-weight: 800; letter-spacing: .08em; padding: 2px 5px; color: #fff; background: var(--c); }
 .ttag { font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .note { font-size: 13px; line-height: 1.5; margin-top: 5px; color: #33333d; white-space: pre-wrap; word-break: break-word; }
-.pl .mini { border: 0; background: none; padding: 2px 4px; font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.pl .mkbox { width: 19px; height: 19px; flex: none; margin-top: 2px; display: grid; place-items: center; font-size: 10px; color: var(--c); }
+.donetag { color: #1B6E4F; font-weight: 800; }
+.explain {
+  margin: 0; padding: 9px 14px; border-bottom: 2px solid var(--faint); background: #F7F8FB;
+  font-size: 12px; line-height: 1.5; color: #44485A;
+}
+.explain b { font-weight: 800; }
+.railsub { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 9px 12px 4px; flex-wrap: wrap; }
+.railsub .hint { font-size: 10.5px; color: var(--muted); font-weight: 600; }
+.mini { border: 0; background: none; padding: 2px 4px; font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
 .pl .mini:hover { color: var(--ink); text-decoration: underline; }
 
 /* ---- day rail ---- */
@@ -909,9 +923,9 @@ export default function Planner() {
             <span className="eyebrow">Past due</span>
           </button>
           <button onClick={() => missedDays.length && setLogDate(missedDays[0])}
-            title={missedDays.length ? `Oldest: ${longDate(missedDays[0])}` : "Every school day logged"}>
+            title={missedDays.length ? `Oldest: ${longDate(missedDays[0])}` : "Every school day written up"}>
             <b style={{ color: missedDays.length ? "#C4442C" : undefined }}>{missedDays.length}</b>
-            <span className="eyebrow">Missed logs</span>
+            <span className="eyebrow">Logs to write</span>
           </button>
         </div>
         <button className="addbtn" onClick={() => setLogDate(today)}
@@ -919,10 +933,10 @@ export default function Planner() {
           {todayStatus === "holiday"
             ? `No school \u00B7 ${NO_SCHOOL[today]}`
             : todayStatus === "complete"
-              ? "\u2713 Today logged"
+              ? "Today's log is written"
               : todayStatus === "noschool"
                 ? "No school today"
-                : `Log today \u00B7 ${todayDone}/${SUBJECTS.length}`}
+                : `Write today's log \u00B7 ${todayDone}/${SUBJECTS.length}`}
         </button>
         <button className="addbtn2" onClick={() => openNew()}>+ Add item</button>
       </div>
@@ -966,7 +980,7 @@ export default function Planner() {
               {view === "month" ? <>{MONTH_NAMES[m]} <i>{y}</i></> : range.title}
             </div>
             <div style={{ flex: "1 1 auto" }} />
-            <button className="ghost" data-on={hideDone} onClick={() => setHideDone((v) => !v)}>Hide done</button>
+            <button className="ghost" data-on={hideDone} onClick={() => setHideDone((v) => !v)}>Hide finished</button>
           </div>
 
           <div className="navbar">
@@ -982,7 +996,7 @@ export default function Planner() {
 
           <p className="msub">
             {view === "month"
-              ? `Click any day to see what's due and add something for it`
+              ? `Click any day to see what's due. Tick a box when homework is finished.`
               : range.sub}
           </p>
 
@@ -1001,9 +1015,9 @@ export default function Planner() {
           {view === "month" && (
             <div className="legend">
               <span className="eyebrow">Daily log</span>
-              <span><i className="lg" data-st="complete">{LOG_MARK.complete}</i> logged</span>
-              <span><i className="lg" data-st="partial">{LOG_MARK.partial}</i> started</span>
-              <span><i className="lg" data-st="missing">{LOG_MARK.missing}</i> not logged</span>
+              <span><i className="lg" data-st="complete">{LOG_MARK.complete}</i> written</span>
+              <span><i className="lg" data-st="partial">{LOG_MARK.partial}</i> half written</span>
+              <span><i className="lg" data-st="missing">{LOG_MARK.missing}</i> not written</span>
               <span><i className="lg" data-st="noschool">{LOG_MARK.noschool}</i> marked no school</span>
               <span><i className="sw" /> school holiday</span>
               <span><i className="sb" /> early dismissal</span>
@@ -1200,12 +1214,16 @@ function RangeList({ items, today, empty, onToggle, onEdit, onAdd }) {
 
 /* ------------------------------ item row --------------------------- */
 
-function ItemRow({ it, onToggle, onEdit, showDue }) {
+function ItemRow({ it, onToggle, onEdit, showDue, readOnly }) {
   const s = SUBJ[it.subject];
   return (
-    <div className="row" data-done={!!it.done}>
-      <button className="check" data-on={!!it.done} onClick={() => onToggle(it)}
-        aria-label={it.done ? "Mark as not done" : "Mark as done"}>{it.done ? "\u2713" : ""}</button>
+    <div className="row" data-done={readOnly ? false : !!it.done}>
+      {readOnly ? (
+        <span className="mkbox" style={{ "--c": s.color }} aria-hidden="true">{TYPE[it.type].mark}</span>
+      ) : (
+        <button className="check" data-on={!!it.done} onClick={() => onToggle(it)}
+          aria-label={it.done ? "Not finished after all" : "Mark this homework finished"}>{it.done ? "\u2713" : ""}</button>
+      )}
       <div className="body">
         <div className="ttl serif">{it.title}</div>
         <div className="tags">
@@ -1213,6 +1231,7 @@ function ItemRow({ it, onToggle, onEdit, showDue }) {
           {s.teacher && <span className="ttag">{s.teacher}</span>}
           <span className="ttag">{TYPE[it.type].mark} {TYPE[it.type].label}</span>
           {showDue && <span className="ttag">&middot; due {longDate(it.due)}</span>}
+          {readOnly && it.done && <span className="ttag donetag">&middot; finished</span>}
           {it.addedBy && <span className="ttag">&middot; added by {it.addedBy}</span>}
           <button className="mini" onClick={() => onEdit(it)}>Edit</button>
         </div>
@@ -1242,13 +1261,19 @@ function DayRail({ open, date, items, today, onClose, onToggle, onEdit, onAdd, o
       ) : items.length === 0 ? (
         <p className="empty">Nothing due this day.</p>
       ) : (
-        <div>{items.map((it) => <ItemRow key={it.id} it={it} onToggle={onToggle} onEdit={onEdit} />)}</div>
+        <div>
+          <div className="railsub">
+            <span className="eyebrow">Homework due this day</span>
+            <span className="hint">Tick the box when you finish it</span>
+          </div>
+          {items.map((it) => <ItemRow key={it.id} it={it} onToggle={onToggle} onEdit={onEdit} />)}
+        </div>
       )}
 
       {date && <button className="railadd" onClick={onAdd}>+ Add item due {longDate(date)}</button>}
       {date && !NO_SCHOOL[date] && (
         <button className="railadd" onClick={onOpenLog}>
-          {logStatusText === "complete" ? "\u2713 View this day's log" : "Open this day's log"}
+          {logStatusText === "complete" ? "View this day's log" : "Write the log for this day"}
         </button>
       )}
     </aside>
@@ -1283,7 +1308,7 @@ function DailyLog({ date, logs, items, today, by, setBy, onClose, onGo,
         <header>
           <div>
             <span className="eyebrow">
-              Daily log{date === today ? " \u00B7 Today" : date > today ? " \u00B7 Upcoming" : ""}
+              What was announced{date === today ? " \u00B7 Today" : date > today ? " \u00B7 Upcoming" : ""}
             </span>
             <h3>{longDate(date)}</h3>
           </div>
@@ -1301,8 +1326,8 @@ function DailyLog({ date, logs, items, today, by, setBy, onClose, onGo,
           <span className="ptext">
             {holiday ? `${holiday} \u00B7 no school`
               : log.noSchool ? "Marked as no school"
-              : finished ? `All ${SUBJECTS.length} subjects checked`
-              : `${done.size} of ${SUBJECTS.length} subjects checked`}
+              : finished ? `All ${SUBJECTS.length} subjects written down`
+              : `${done.size} of ${SUBJECTS.length} subjects written down`}
           </span>
           {!holiday && (
             <button className="ghost" data-on={log.noSchool} onClick={() => onNoSchool(date, !log.noSchool)}>
@@ -1311,6 +1336,13 @@ function DailyLog({ date, logs, items, today, by, setBy, onClose, onGo,
           )}
           {!closed && SHORT_DAYS[date] && <span className="shortnote">{SHORT_DAYS[date]}</span>}
         </div>
+
+        {!closed && (
+          <p className="explain">
+            This is only for <b>writing down</b> what each teacher announced today.
+            Ticking off homework you have <b>finished</b> happens on the calendar, not here.
+          </p>
+        )}
 
         {closed ? (
           <p className="blank" style={{ borderTop: "2px solid var(--faint)" }}>
@@ -1328,11 +1360,11 @@ function DailyLog({ date, logs, items, today, by, setBy, onClose, onGo,
                     <span className="stag">{s.code}</span>
                     <span className="lname">{s.name}{s.teacher && <em> ({s.teacher})</em>}</span>
                     <span className="lstate">
-                      {state === "items" ? `${mine.length} announced` : state === "none" ? "\u2713 Nothing" : "Not checked"}
+                      {state === "items" ? `${mine.length} written down` : state === "none" ? "Nothing announced" : "Not asked yet"}
                     </span>
                   </div>
 
-                  {mine.map((it) => <ItemRow key={it.id} it={it} onToggle={onToggle} onEdit={onEdit} showDue />)}
+                  {mine.map((it) => <ItemRow key={it.id} it={it} onEdit={onEdit} showDue readOnly />)}
 
                   <div className="lacts">
                     <button className="opt" data-on={isNone} disabled={mine.length > 0}
@@ -1355,7 +1387,7 @@ function DailyLog({ date, logs, items, today, by, setBy, onClose, onGo,
             </button>
           )}
           {(closed || remaining.length === 0) && (
-            <button className="save" onClick={onClose}>Done</button>
+            <button className="save" onClick={onClose}>Close the log</button>
           )}
           <div className="opts" style={{ flex: "0 0 auto" }}>
             {PEOPLE.map((pn) => (
