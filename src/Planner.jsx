@@ -310,11 +310,6 @@ function rangeFor(id, today) {
 
 const inRange = (it, r) => it.due >= r.from && it.due <= r.to && (!r.openOnly || !it.done);
 
-const hexA = (hex, a) => {
-  const n = parseInt(hex.slice(1), 16);
-  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
-};
-
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
 /* ------------------------------ styles ----------------------------- */
@@ -389,30 +384,26 @@ const CSS = `
 .legend .sw { width: 15px; height: 15px; display: block; border: 1.5px solid var(--faint); background: #D4D8E2; }
 .legend .sb { width: 15px; height: 4px; display: block; background: #B0761A; }
 
-.modal.wide { max-width: 640px; max-height: 88vh; display: flex; flex-direction: column; }
-.modal.wide header { flex: none; align-items: flex-start; }
-.modal.wide header h3 { margin-top: 2px; }
-.progress { flex: none; display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-bottom: 2px solid var(--faint); flex-wrap: wrap; }
+.progress { flex: none; display: flex; align-items: center; gap: 9px; padding: 11px 14px; border-bottom: 2px solid var(--faint); flex-wrap: wrap; }
 .bar { flex: 1 1 120px; height: 12px; border: 2px solid var(--rule); background: var(--card); min-width: 90px; }
 .bar i { display: block; height: 100%; background: var(--ink); transition: width .2s ease; }
 .bar[data-full="true"] i { background: var(--ink); }
 .ptext { font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.logbody { overflow-y: auto; flex: 1 1 auto; }
+.logbody { border-top: 2px solid var(--faint); }
 .logrow { border-bottom: 2px solid var(--rule); padding: 9px 12px 11px; position: relative; }
 .logrow:last-child { border-bottom: 0; }
 .logrow[data-state="open"] { background: #FCFBF4; }
 .logrow[data-state="open"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #B0761A; }
 .logrow[data-state="none"] { opacity: .62; }
 .logrow[data-state="items"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--c); }
-.lhead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.lname { font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: -.01em; flex: 1 1 auto; }
-.lstate { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.lhead { display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
+.lname { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: -.01em; flex: 1 1 auto; line-height: 1.15; }
+.lstate { font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
 .logrow[data-state="open"] .lstate { color: #8a5c10; }
 .lacts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
 .lacts .opt { font-size: 11px; }
 .pl .lacts .opt:disabled { opacity: .35; cursor: default; }
 .logrow .row { padding: 6px 0; border-bottom: 0; }
-.modal.wide footer { flex: none; flex-wrap: wrap; }
 
 .pl .addbtn {
   background: var(--ink); color: #fff; border: 0; padding: 10px 16px;
@@ -484,7 +475,7 @@ const CSS = `
 /* ---- calendar ---- */
 .cal { border: 3px solid var(--rule); background: var(--rule); display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); gap: 2px; }
 .dow { background: var(--ink); color: #fff; text-align: center; padding: 5px 0; font-size: 10px; font-weight: 700; letter-spacing: .12em; }
-.cell { background: var(--card); min-height: 106px; border: 0; text-align: left; padding: 4px 4px 6px; display: flex; flex-direction: column; gap: 3px; position: relative; }
+.cell { background: var(--card); min-height: 88px; border: 0; text-align: left; padding: 4px 4px 6px; display: flex; flex-direction: column; gap: 3px; position: relative; }
 .cell[data-blank="true"] { background: #DDE0E8; cursor: default; }
 .cell[data-hol="true"] { background: #D4D8E2; }
 .cell[data-hol="true"] .dnum { color: #7E828F; }
@@ -510,21 +501,28 @@ const CSS = `
 .cell .dnum { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; padding: 2px 2px 0; }
 .cell[data-today="true"] .dnum { background: var(--ink); color: #fff; padding: 3px 5px; }
 .cell[data-weekend="true"] .dnum { color: var(--muted); }
-.chips { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.chip {
-  display: flex; align-items: center; gap: 4px; padding: 2px 4px; min-width: 0;
-  border-left: 3px solid var(--c); background: var(--bg); font-size: 10.5px; line-height: 1.25;
+.counts { display: flex; flex-direction: column; gap: 3px; padding: 4px 4px 0; min-width: 0; }
+.cnt {
+  display: flex; align-items: baseline; gap: 5px; min-width: 0;
+  font-size: 9px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted);
 }
-.chip .mk { color: var(--c); font-size: 8px; flex: none; }
-.chip .tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.chip[data-done="true"] { opacity: .45; text-decoration: line-through; }
-.more { font-size: 9.5px; font-weight: 700; letter-spacing: .06em; color: var(--muted); padding-left: 5px; text-transform: uppercase; }
-.dots { display: none; flex-wrap: wrap; gap: 3px; padding: 2px 3px; }
-.dots i { width: 7px; height: 7px; background: var(--c); display: block; }
+.cnt b {
+  font-size: 17px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums;
+  color: var(--ink); min-width: 11px;
+}
+.cnt[data-kind="log"] b { font-size: 13px; color: var(--muted); }
+.cnt[data-kind="due"][data-clear="true"] b { color: #1B6E4F; }
+.cnt[data-kind="due"][data-clear="true"] { color: #1B6E4F; }
+
 @media (max-width: 720px) {
-  .cell { min-height: 62px; }
-  .chips, .more { display: none; }
-  .dots { display: flex; }
+  .cell { min-height: 66px; }
+  .counts { gap: 1px; padding: 2px 3px 0; }
+  .cnt { font-size: 0; gap: 2px; }
+  .cnt::after { font-size: 8px; letter-spacing: .04em; }
+  .cnt[data-kind="due"]::after { content: "DUE"; }
+  .cnt[data-kind="log"]::after { content: "LOG"; }
+  .cnt b { font-size: 13px; }
+  .cnt[data-kind="log"] b { font-size: 11px; }
   .mtitle { font-size: 17px; }
 }
 
@@ -557,7 +555,7 @@ const CSS = `
 .donetag { color: #1B6E4F; font-weight: 800; }
 .explain {
   margin: 0; padding: 9px 14px; border-bottom: 2px solid var(--faint); background: #F7F8FB;
-  font-size: 12px; line-height: 1.5; color: #44485A;
+  font-size: 11.5px; line-height: 1.5; color: #44485A;
 }
 .explain b { font-weight: 800; }
 .railsub { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 9px 12px 4px; flex-wrap: wrap; }
@@ -566,8 +564,33 @@ const CSS = `
 .pl .mini:hover { color: var(--ink); text-decoration: underline; }
 
 /* ---- day rail ---- */
-.rail { border-left: 3px solid var(--rule); background: var(--card); min-height: calc(100vh - 60px); padding-bottom: 30px; }
-.railhd { padding: 14px 14px 12px; border-bottom: 3px solid var(--rule); position: relative; }
+.rail {
+  border-left: 3px solid var(--rule); background: var(--card);
+  height: calc(100vh - 60px); position: sticky; top: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.railhd { padding: 14px 14px 12px; border-bottom: 2px solid var(--rule); position: relative; flex: none; }
+.raildays { display: flex; gap: 5px; margin-top: 9px; }
+.raildays .navbtn { width: 28px; height: 26px; font-size: 12px; }
+
+.railtabs { display: flex; flex: none; border-bottom: 3px solid var(--rule); }
+.railtabs button {
+  flex: 1 1 50%; background: var(--soft); border: 0; padding: 9px 6px;
+  font-size: 11.5px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
+  display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--muted);
+  border-bottom: 3px solid transparent; margin-bottom: -3px;
+}
+.railtabs button + button { border-left: 2px solid var(--rule); }
+.railtabs button[data-on="true"] { background: var(--card); color: var(--ink); border-bottom-color: var(--card); }
+.railtabs button:hover { color: var(--ink); }
+.railtabs b { font-variant-numeric: tabular-nums; font-weight: 800; font-size: 12px; opacity: .6; }
+.railtabs button[data-on="true"] b { opacity: 1; }
+
+.railpane { flex: 1 1 auto; overflow-y: auto; padding-bottom: 26px; }
+.railby { padding: 12px 14px 0; }
+.railby .opts { margin-top: 6px; }
+.pl .railprimary { background: var(--ink); color: #fff; border-style: solid; }
+.pl .railprimary:hover { background: #34343f; }
 .railhd h3 { margin: 2px 0 0; font-size: 19px; font-weight: 800; text-transform: uppercase; letter-spacing: -.02em; }
 .railclose { display: none; }
 .rail .empty { padding: 22px 14px; color: var(--muted); font-size: 13.5px; line-height: 1.5; margin: 0; }
@@ -575,10 +598,11 @@ const CSS = `
 .railadd:hover { background: var(--soft); }
 @media (max-width: 1140px) {
   .rail {
-    position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 40; min-height: 0;
-    max-height: 76vh; overflow-y: auto; border-left: 0; border-top: 3px solid var(--rule);
+    position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 40;
+    height: auto; max-height: 82vh; overflow: hidden; border-left: 0; border-top: 3px solid var(--rule);
     transform: translateY(102%); transition: transform .22s ease; box-shadow: 0 -8px 26px rgba(0,0,0,.18);
   }
+  .railpane { max-height: 56vh; }
   .rail[data-open="true"] { transform: none; }
   .railclose { display: block; position: absolute; right: 10px; top: 12px; border: 2px solid var(--rule); background: var(--card); width: 30px; height: 30px; font-weight: 800; }
 }
@@ -640,7 +664,7 @@ export default function Planner() {
   const [needKey, setNeedKey] = useState(false);
   const [keyInput, setKeyInput] = useState("");
   const [logs, setLogs] = useState({});
-  const [logDate, setLogDate] = useState(null);   // day whose log is open
+  const [railTab, setRailTab] = useState("due");  // "due" | "log"
   const [logBy, setLogBy] = useState(PEOPLE[0]);
   const itemsRef = useRef([]);
   itemsRef.current = items;
@@ -803,6 +827,13 @@ export default function Planner() {
     return m;
   }, [visible]);
 
+  // How many entries were written down on each day (as opposed to due).
+  const loggedByDate = useMemo(() => {
+    const m = {};
+    for (const i of visible) if (i.announced) m[i.announced] = (m[i.announced] || 0) + 1;
+    return m;
+  }, [visible]);
+
   const openCounts = useMemo(() => {
     const c = {};
     for (const i of items) if (!i.done && i.due >= today) c[i.subject] = (c[i.subject] || 0) + 1;
@@ -840,12 +871,12 @@ export default function Planner() {
   const overdue = useMemo(() => inScope.filter((i) => !i.done && i.due < today).length, [inScope, today]);
 
   /* ---- actions ---- */
-  const openNew = (subject, due, announced) =>
+  const openNew = (subject, due, announced, by) =>
     setEditing({
       id: null, subject: subject || SUBJECTS[0].id, type: "assignment",
       title: "", due: due || "", details: "",
-      addedBy: logDate ? logBy : PEOPLE[0], done: false,
-      announced: announced || logDate || today,
+      addedBy: by || PEOPLE[0], done: false,
+      announced: announced || today,
     });
 
   const openEdit = (it) => setEditing({ ...it });
@@ -902,6 +933,7 @@ export default function Planner() {
   };
 
   const pickDay = (k) => { setSelected(k); setRailOpen(true); };
+  const openLog = (k) => { setSelected(k); setRailTab("log"); setRailOpen(true); };
   const toggleSubject = (id) => setFilter((f) => (f.includes(id) ? f.filter((x) => x !== id) : [...f, id]));
 
   const [y, m] = SCHOOL_MONTHS[monthIx];
@@ -939,13 +971,13 @@ export default function Planner() {
             <b style={{ color: overdue ? "#C4442C" : undefined }}>{overdue}</b>
             <span className="eyebrow">Past due</span>
           </button>
-          <button onClick={() => missedDays.length && setLogDate(missedDays[0])}
+          <button onClick={() => missedDays.length && openLog(missedDays[0])}
             title={missedDays.length ? `Oldest: ${longDate(missedDays[0])}` : "Every school day written up"}>
             <b style={{ color: missedDays.length ? "#C4442C" : undefined }}>{missedDays.length}</b>
             <span className="eyebrow">Logs to write</span>
           </button>
         </div>
-        <button className="addbtn" onClick={() => setLogDate(today)}
+        <button className="addbtn" onClick={() => openLog(today)}
           data-done={todayStatus === "complete"} data-off={todayStatus === "holiday" || todayStatus === "noschool"}>
           {todayStatus === "holiday"
             ? `No school \u00B7 ${NO_SCHOOL[today]}`
@@ -1027,7 +1059,8 @@ export default function Planner() {
             <div className="listwrap"><p className="blank">Opening the planner&hellip;</p></div>
           ) : view === "month" ? (
             <MonthGrid y={y} m={m} byDate={byDate} today={today} selected={selected}
-              onPick={pickDay} logs={logs} allItems={items} onOpenLog={setLogDate} />
+              onPick={pickDay} logs={logs} allItems={items} onOpenLog={openLog}
+              loggedByDate={loggedByDate} />
           ) : (
             <RangeList
               items={rangeItems} today={today} empty={range.empty}
@@ -1062,27 +1095,17 @@ export default function Planner() {
         </div>
 
         <DayRail
-          open={railOpen} date={selected} items={selected ? byDate[selected] || [] : []}
-          today={today} onClose={() => setRailOpen(false)}
-          onToggle={toggleDone} onEdit={openEdit} onAdd={() => openNew(null, selected)}
-          onOpenLog={() => setLogDate(selected)}
-          logStatusText={selected ? logStatus(selected, logs, items, today) : "none"}
+          open={railOpen} date={selected} dueItems={selected ? byDate[selected] || [] : []}
+          logs={logs} allItems={items} today={today}
+          tab={railTab} setTab={setRailTab} by={logBy} setBy={setLogBy}
+          onClose={() => setRailOpen(false)}
+          onGo={(d) => setSelected(d)}
+          onToggle={toggleDone} onEdit={openEdit}
+          onAddDue={() => openNew(null, selected)}
+          onAddLog={(subjectId) => openNew(subjectId, "", selected, logBy)}
+          onNothing={setNothing} onNoSchool={setNoSchool} onRest={markRestNothing}
         />
       </div>
-
-      {logDate && (
-        <DailyLog
-          date={logDate} logs={logs} items={items} today={today} by={logBy} setBy={setLogBy}
-          onClose={() => setLogDate(null)}
-          onGo={(d) => setLogDate(d)}
-          onNothing={setNothing}
-          onNoSchool={setNoSchool}
-          onRest={markRestNothing}
-          onAdd={(subjectId) => openNew(subjectId, "", logDate)}
-          onEdit={openEdit}
-          onToggle={toggleDone}
-        />
-      )}
 
       {editing && (
         <EntryForm
@@ -1141,7 +1164,7 @@ function Spine({ subjects, counts, filter, onToggle, onClear, onAdd }) {
 
 /* ------------------------------ calendar --------------------------- */
 
-function MonthGrid({ y, m, byDate, today, selected, onPick, logs, allItems, onOpenLog }) {
+function MonthGrid({ y, m, byDate, today, selected, onPick, logs, allItems, onOpenLog, loggedByDate }) {
   const lead = firstDow(y, m);
   const total = daysInMonth(y, m);
   const cells = [];
@@ -1161,13 +1184,20 @@ function MonthGrid({ y, m, byDate, today, selected, onPick, logs, allItems, onOp
         const hol = NO_SCHOOL[k];
         const off = !hol && !inSchoolYear(k);
         const short = SHORT_DAYS[k];
+        const fin = list.filter((i) => i.done).length;
+        const logged = loggedByDate[k] || 0;
+        const tip = [
+          hol || short || null,
+          list.length ? `${list.length} due (${fin} finished)` : null,
+          logged ? `${logged} written down this day` : null,
+        ].filter(Boolean).join(" \u00B7 ") || undefined;
         return (
           <button
             key={k} className="cell" onClick={() => onPick(k)}
             data-today={k === today} data-sel={k === selected} data-weekend={wd === 0 || wd === 6}
             data-hol={Boolean(hol)} data-off={off} data-short={Boolean(short)}
-            title={hol || short || undefined}
-            aria-label={`${longDate(k)}${hol ? ` — ${hol}` : ""} — ${list.length} item${list.length === 1 ? "" : "s"}`}
+            title={tip}
+            aria-label={`${longDate(k)}${hol ? `, ${hol}` : ""}, ${list.length} due, ${logged} written down`}
           >
             <span className="dnum">{d}</span>
             {hol && <span className="holname">{hol}</span>}
@@ -1178,22 +1208,17 @@ function MonthGrid({ y, m, byDate, today, selected, onPick, logs, allItems, onOp
                 {LOG_MARK[st]}
               </span>
             )}
-            <div className="chips">
-              {list.slice(0, 3).map((it) => {
-                const s = SUBJ[it.subject];
-                return (
-                  <span key={it.id} className="chip" data-done={!!it.done}
-                    title={`${s.name}${teacherOf(s)} — ${it.title}`}
-                    style={{ "--c": s.color, "--bg": hexA(s.color, 0.1) }}>
-                    <span className="mk">{TYPE[it.type].mark}</span>
-                    <span className="tx">{it.title}</span>
-                  </span>
-                );
-              })}
-              {list.length > 3 && <span className="more">+{list.length - 3} more</span>}
-            </div>
-            <div className="dots">
-              {list.slice(0, 8).map((it) => <i key={it.id} style={{ "--c": SUBJ[it.subject].color, opacity: it.done ? 0.35 : 1 }} />)}
+            <div className="counts">
+              {list.length > 0 && (
+                <span className="cnt" data-kind="due" data-clear={fin === list.length}>
+                  <b>{list.length}</b>due
+                </span>
+              )}
+              {logged > 0 && (
+                <span className="cnt" data-kind="log">
+                  <b>{logged}</b>logged
+                </span>
+              )}
             </div>
           </button>
         );
@@ -1264,162 +1289,160 @@ function ItemRow({ it, onToggle, onEdit, showDue, readOnly }) {
   );
 }
 
-/* ------------------------------ day rail --------------------------- */
+/* ------------------------------ day rail --------------------------- *
+ * One panel per day, two tabs: what is DUE that day (work you tick off)
+ * and the LOG for that day (what teachers announced). Keeping them side
+ * by side but never on screen at once is what stops the two "done"
+ * ideas from blurring together.
+ * -------------------------------------------------------------------- */
 
-function DayRail({ open, date, items, today, onClose, onToggle, onEdit, onAdd, onOpenLog, logStatusText }) {
+function DayRail({
+  open, date, dueItems, logs, allItems, today, tab, setTab, by, setBy,
+  onClose, onGo, onToggle, onEdit, onAddDue, onNothing, onNoSchool, onRest, onAddLog,
+}) {
+  if (!date) {
+    return (
+      <aside className="rail" data-open={open}>
+        <div className="railhd">
+          <span className="eyebrow">Pick a day</span>
+          <h3>No day selected</h3>
+          <button className="railclose" onClick={onClose} aria-label="Close">&times;</button>
+        </div>
+        <p className="empty">Tap any date on the calendar to see what&rsquo;s due and write that day&rsquo;s log.</p>
+      </aside>
+    );
+  }
+
+  const holiday = NO_SCHOOL[date];
+  const log = { ...blankLog(), ...(logs[date] || {}) };
+  const closed = Boolean(holiday) || log.noSchool;
+  const written = addressedOn(date, logs, allItems);
+  const remaining = SUBJECTS.filter((s) => !written.has(s.id));
+  const pct = Math.round((written.size / SUBJECTS.length) * 100);
+  const allWritten = written.size >= SUBJECTS.length;
+  const finishedCount = dueItems.filter((i) => i.done).length;
+
+  const prev = addDays(date, -1);
+  const next = addDays(date, 1);
+  const announcedFor = (id) => allItems.filter((i) => i.announced === date && i.subject === id);
+
   return (
     <aside className="rail" data-open={open}>
       <div className="railhd">
         <span className="eyebrow">
-          {date ? (date === today ? "Today" : date < today ? "Past" : `In ${daysBetween(today, date)} days`) : "Pick a day"}
+          {date === today ? "Today" : date < today ? "Past" : `In ${daysBetween(today, date)} days`}
         </span>
-        <h3>{date ? longDate(date) : "No day selected"}</h3>
-        {date && NO_SCHOOL[date] && <div className="holnote" style={{ marginTop: 5 }}>{NO_SCHOOL[date]} &middot; no school</div>}
-        {date && !NO_SCHOOL[date] && SHORT_DAYS[date] && <div className="shortnote" style={{ marginTop: 5 }}>{SHORT_DAYS[date]}</div>}
+        <h3>{longDate(date)}</h3>
+        {holiday && <div className="holnote" style={{ marginTop: 5 }}>{holiday} &middot; no school</div>}
+        {!holiday && SHORT_DAYS[date] && <div className="shortnote" style={{ marginTop: 5 }}>{SHORT_DAYS[date]}</div>}
+        <div className="raildays">
+          <button className="navbtn" onClick={() => onGo(prev)} disabled={prev < YEAR_START} aria-label="Previous day">&larr;</button>
+          <button className="navbtn" onClick={() => onGo(next)} disabled={next > YEAR_END} aria-label="Next day">&rarr;</button>
+        </div>
         <button className="railclose" onClick={onClose} aria-label="Close">&times;</button>
       </div>
 
-      {!date ? (
-        <p className="empty">Tap any date on the calendar to see what&rsquo;s due.</p>
-      ) : items.length === 0 ? (
-        <p className="empty">Nothing due this day.</p>
-      ) : (
-        <div>
-          <div className="railsub">
-            <span className="eyebrow">Homework due this day</span>
-            <span className="hint">Tick the box when you finish it</span>
-          </div>
-          {items.map((it) => <ItemRow key={it.id} it={it} onToggle={onToggle} onEdit={onEdit} />)}
-        </div>
-      )}
-
-      {date && <button className="railadd" onClick={onAdd}>+ Add item due {longDate(date)}</button>}
-      {date && !NO_SCHOOL[date] && (
-        <button className="railadd" onClick={onOpenLog}>
-          {logStatusText === "complete" ? "View this day's log" : "Write the log for this day"}
+      <div className="railtabs" role="tablist">
+        <button role="tab" aria-selected={tab === "due"} data-on={tab === "due"} onClick={() => setTab("due")}>
+          Due <b>{finishedCount}/{dueItems.length}</b>
         </button>
+        <button role="tab" aria-selected={tab === "log"} data-on={tab === "log"} onClick={() => setTab("log")}>
+          Log <b>{closed ? "\u2013" : `${written.size}/${SUBJECTS.length}`}</b>
+        </button>
+      </div>
+
+      {tab === "due" ? (
+        <div className="railpane">
+          {dueItems.length === 0 ? (
+            <p className="empty">Nothing due this day.</p>
+          ) : (
+            <>
+              <div className="railsub">
+                <span className="eyebrow">Homework due this day</span>
+                <span className="hint">Tick the box when you finish it</span>
+              </div>
+              {dueItems.map((it) => <ItemRow key={it.id} it={it} onToggle={onToggle} onEdit={onEdit} />)}
+            </>
+          )}
+          <button className="railadd" onClick={onAddDue}>+ Add item due {shortDate(date)}</button>
+        </div>
+      ) : (
+        <div className="railpane">
+          <div className="progress">
+            {!closed && <div className="bar" data-full={allWritten}><i style={{ width: `${pct}%` }} /></div>}
+            <span className="ptext">
+              {holiday ? `${holiday} \u00B7 no school`
+                : log.noSchool ? "Marked as no school"
+                : allWritten ? `All ${SUBJECTS.length} written down`
+                : `${written.size} of ${SUBJECTS.length} written down`}
+            </span>
+            {!holiday && (
+              <button className="ghost" data-on={log.noSchool} onClick={() => onNoSchool(date, !log.noSchool)}>
+                {log.noSchool ? "There was school" : "No school"}
+              </button>
+            )}
+          </div>
+
+          {closed ? (
+            <p className="blank">
+              {holiday ? `${holiday} — school is closed, so there is nothing to write down.` : "Nothing to write down for this day."}
+            </p>
+          ) : (
+            <>
+              <p className="explain">
+                Write down what each teacher <b>announced</b>. Ticking off homework
+                you have <b>finished</b> happens in the Due tab.
+              </p>
+
+              <div className="logbody">
+                {SUBJECTS.map((s) => {
+                  const mine = announcedFor(s.id);
+                  const isNone = log.none.includes(s.id);
+                  const state = mine.length ? "items" : isNone ? "none" : "open";
+                  return (
+                    <div className="logrow" key={s.id} data-state={state} style={{ "--c": s.color }}>
+                      <div className="lhead">
+                        <span className="stag">{s.code}</span>
+                        <span className="lname">{s.name}{s.teacher && <em> ({s.teacher})</em>}</span>
+                      </div>
+                      <div className="lstate">
+                        {state === "items" ? `${mine.length} written down` : state === "none" ? "Nothing announced" : "Not asked yet"}
+                      </div>
+
+                      {mine.map((it) => <ItemRow key={it.id} it={it} onEdit={onEdit} showDue readOnly />)}
+
+                      <div className="lacts">
+                        <button className="opt" data-on={isNone} disabled={mine.length > 0}
+                          title={mine.length ? "Something was announced for this subject" : ""}
+                          onClick={() => onNothing(date, s.id, !isNone)}>
+                          Nothing
+                        </button>
+                        <button className="opt" onClick={() => onAddLog(s.id)}>+ Assigned</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {remaining.length > 0 && (
+                <button className="railadd railprimary" onClick={() => onRest(date)}>
+                  Nothing else announced ({remaining.length} left)
+                </button>
+              )}
+
+              <div className="railby">
+                <span className="eyebrow">Written by</span>
+                <div className="opts">
+                  {PEOPLE.map((pn) => (
+                    <button key={pn} className="opt" data-on={by === pn} onClick={() => setBy(pn)}>{pn}</button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       )}
     </aside>
-  );
-}
-
-/* ------------------------------ daily log -------------------------- */
-
-function DailyLog({ date, logs, items, today, by, setBy, onClose, onGo,
-                    onNothing, onNoSchool, onRest, onAdd, onEdit, onToggle }) {
-  useEffect(() => {
-    const esc = (e) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", esc);
-    return () => window.removeEventListener("keydown", esc);
-  }, [onClose]);
-
-  const log = { ...blankLog(), ...(logs[date] || {}) };
-  const holiday = NO_SCHOOL[date];
-  const closed = Boolean(holiday) || log.noSchool;
-  const done = addressedOn(date, logs, items);
-  const remaining = SUBJECTS.filter((s) => !done.has(s.id));
-  const pct = Math.round((done.size / SUBJECTS.length) * 100);
-  const finished = done.size >= SUBJECTS.length;
-
-  const prev = addDays(date, -1);
-  const next = addDays(date, 1);
-  const announcedFor = (id) => items.filter((i) => i.announced === date && i.subject === id);
-
-  return (
-    <div className="scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal wide" role="dialog" aria-modal="true" aria-label="Daily log">
-        <header>
-          <div>
-            <span className="eyebrow">
-              What was announced{date === today ? " \u00B7 Today" : date > today ? " \u00B7 Upcoming" : ""}
-            </span>
-            <h3>{longDate(date)}</h3>
-          </div>
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <button className="navbtn" onClick={() => onGo(prev)} aria-label="Previous day"
-              disabled={prev < YEAR_START}>&larr;</button>
-            <button className="navbtn" onClick={() => onGo(next)} aria-label="Next day"
-              disabled={next > YEAR_END}>&rarr;</button>
-            <button className="cancel" onClick={onClose}>Close</button>
-          </div>
-        </header>
-
-        <div className="progress">
-          {!closed && <div className="bar" data-full={finished}><i style={{ width: `${pct}%` }} /></div>}
-          <span className="ptext">
-            {holiday ? `${holiday} \u00B7 no school`
-              : log.noSchool ? "Marked as no school"
-              : finished ? `All ${SUBJECTS.length} subjects written down`
-              : `${done.size} of ${SUBJECTS.length} subjects written down`}
-          </span>
-          {!holiday && (
-            <button className="ghost" data-on={log.noSchool} onClick={() => onNoSchool(date, !log.noSchool)}>
-              {log.noSchool ? "There was school" : "No school"}
-            </button>
-          )}
-          {!closed && SHORT_DAYS[date] && <span className="shortnote">{SHORT_DAYS[date]}</span>}
-        </div>
-
-        {!closed && (
-          <p className="explain">
-            This is only for <b>writing down</b> what each teacher announced today.
-            Ticking off homework you have <b>finished</b> happens on the calendar, not here.
-          </p>
-        )}
-
-        {closed ? (
-          <p className="blank" style={{ borderTop: "2px solid var(--faint)" }}>
-            {holiday ? `${holiday} — school is closed, so there is nothing to log.` : "Nothing to log for this day."}
-          </p>
-        ) : (
-          <div className="logbody">
-            {SUBJECTS.map((s) => {
-              const mine = announcedFor(s.id);
-              const isNone = log.none.includes(s.id);
-              const state = mine.length ? "items" : isNone ? "none" : "open";
-              return (
-                <div className="logrow" key={s.id} data-state={state} style={{ "--c": s.color }}>
-                  <div className="lhead">
-                    <span className="stag">{s.code}</span>
-                    <span className="lname">{s.name}{s.teacher && <em> ({s.teacher})</em>}</span>
-                    <span className="lstate">
-                      {state === "items" ? `${mine.length} written down` : state === "none" ? "Nothing announced" : "Not asked yet"}
-                    </span>
-                  </div>
-
-                  {mine.map((it) => <ItemRow key={it.id} it={it} onEdit={onEdit} showDue readOnly />)}
-
-                  <div className="lacts">
-                    <button className="opt" data-on={isNone} disabled={mine.length > 0}
-                      title={mine.length ? "Something was announced for this subject" : ""}
-                      onClick={() => onNothing(date, s.id, !isNone)}>
-                      Nothing announced
-                    </button>
-                    <button className="opt" onClick={() => onAdd(s.id)}>+ Something was assigned</button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        <footer>
-          {!closed && remaining.length > 0 && (
-            <button className="save" onClick={() => onRest(date)}>
-              Nothing else announced ({remaining.length} left)
-            </button>
-          )}
-          {(closed || remaining.length === 0) && (
-            <button className="save" onClick={onClose}>Close the log</button>
-          )}
-          <div className="opts" style={{ flex: "0 0 auto" }}>
-            {PEOPLE.map((pn) => (
-              <button key={pn} className="opt" data-on={by === pn} onClick={() => setBy(pn)}>{pn}</button>
-            ))}
-          </div>
-        </footer>
-      </div>
-    </div>
   );
 }
 
