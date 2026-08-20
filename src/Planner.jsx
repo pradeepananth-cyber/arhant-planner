@@ -588,6 +588,7 @@ const CSS = `
 
 .railpane { flex: 1 1 auto; overflow-y: auto; padding-bottom: 26px; }
 .railby { padding: 12px 14px 0; }
+.futurenote { margin: 10px 14px 0; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
 .railby .opts { margin-top: 6px; }
 .pl .railprimary { background: var(--ink); color: #fff; border-style: solid; }
 .pl .railprimary:hover { background: #34343f; }
@@ -910,12 +911,14 @@ export default function Planner() {
     commit((doc) => ({ ...doc, items: doc.items.map((i) => (i.id === it.id ? { ...i, done: !i.done } : i)) }));
 
   /* ---- daily log actions ---- */
-  const writeLog = (date, fn) =>
-    commit((doc) => {
+  const writeLog = (date, fn) => {
+    if (date > today) return;          // a day cannot be logged before it happens
+    return commit((doc) => {
       const cur = { ...blankLog(), ...(doc.logs[date] || {}) };
       const next = { ...fn(cur), updatedAt: new Date().toISOString(), by: logBy };
       return { ...doc, logs: { ...doc.logs, [date]: next } };
     });
+  };
 
   const setNothing = (date, subjectId, on) =>
     writeLog(date, (lg) => ({
@@ -933,7 +936,11 @@ export default function Planner() {
   };
 
   const pickDay = (k) => { setSelected(k); setRailOpen(true); };
-  const openLog = (k) => { setSelected(k); setRailTab("log"); setRailOpen(true); };
+  const openLog = (k) => {
+    setSelected(k);
+    setRailTab(k > today ? "due" : "log");
+    setRailOpen(true);
+  };
   const toggleSubject = (id) => setFilter((f) => (f.includes(id) ? f.filter((x) => x !== id) : [...f, id]));
 
   const [y, m] = SCHOOL_MONTHS[monthIx];
@@ -1313,6 +1320,8 @@ function DayRail({
     );
   }
 
+  const future = date > today;
+  const view = future ? "due" : tab;          // no logging ahead of time
   const holiday = NO_SCHOOL[date];
   const log = { ...blankLog(), ...(logs[date] || {}) };
   const closed = Boolean(holiday) || log.noSchool;
@@ -1342,16 +1351,18 @@ function DayRail({
         <button className="railclose" onClick={onClose} aria-label="Close">&times;</button>
       </div>
 
-      <div className="railtabs" role="tablist">
-        <button role="tab" aria-selected={tab === "due"} data-on={tab === "due"} onClick={() => setTab("due")}>
-          Due <b>{finishedCount}/{dueItems.length}</b>
-        </button>
-        <button role="tab" aria-selected={tab === "log"} data-on={tab === "log"} onClick={() => setTab("log")}>
-          Log <b>{closed ? "\u2013" : `${written.size}/${SUBJECTS.length}`}</b>
-        </button>
-      </div>
+      {!future && (
+        <div className="railtabs" role="tablist">
+          <button role="tab" aria-selected={view === "due"} data-on={view === "due"} onClick={() => setTab("due")}>
+            Due <b>{finishedCount}/{dueItems.length}</b>
+          </button>
+          <button role="tab" aria-selected={view === "log"} data-on={view === "log"} onClick={() => setTab("log")}>
+            Log <b>{closed ? "\u2013" : `${written.size}/${SUBJECTS.length}`}</b>
+          </button>
+        </div>
+      )}
 
-      {tab === "due" ? (
+      {view === "due" ? (
         <div className="railpane">
           {dueItems.length === 0 ? (
             <p className="empty">Nothing due this day.</p>
@@ -1365,6 +1376,13 @@ function DayRail({
             </>
           )}
           <button className="railadd" onClick={onAddDue}>+ Add item due {shortDate(date)}</button>
+          {future && (
+            <p className="futurenote">
+              {holiday
+                ? `${holiday} — no school this day.`
+                : `The daily log for this day opens on ${shortDate(date)}. You can still add anything already known to be due.`}
+            </p>
+          )}
         </div>
       ) : (
         <div className="railpane">
