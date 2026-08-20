@@ -208,6 +208,29 @@ const shortDate = (s) => {
   const { m, d } = parseKey(s);
   return `${MONTH_NAMES[m].slice(0, 3)} ${d}`;
 };
+/* Two different clocks. "Given" is how long the teacher allowed, fixed
+   the moment it was announced. "Left" is how long is actually still
+   there, counting down from today. */
+function runway(it) {
+  if (!it.announced || !it.due) return null;
+  const n = daysBetween(it.announced, it.due);
+  if (n < 0) return null;                       // due date moved earlier; nothing useful to say
+  return {
+    days: n,
+    text: n === 0 ? "same day" : n === 1 ? "1 day given" : `${n} days given`,
+    tight: n <= 1,
+  };
+}
+
+function remaining(it, today) {
+  if (!it.due || it.done) return null;          // finished work has no clock
+  const n = daysBetween(today, it.due);
+  if (n < 0) return { days: n, text: `${Math.abs(n)} ${Math.abs(n) === 1 ? "day" : "days"} overdue`, level: "late" };
+  if (n === 0) return { days: 0, text: "due today", level: "late" };
+  if (n === 1) return { days: 1, text: "due tomorrow", level: "soon" };
+  return { days: n, text: `${n} days left`, level: "ok" };
+}
+
 const daysBetween = (a, b) => {
   const A = parseKey(a), B = parseKey(b);
   return Math.round((Date.UTC(B.y, B.m, B.d) - Date.UTC(A.y, A.m, A.d)) / 86400000);
@@ -477,6 +500,15 @@ const CSS = `
 .dow { background: var(--ink); color: #fff; text-align: center; padding: 5px 0; font-size: 10px; font-weight: 700; letter-spacing: .12em; }
 .cell { background: var(--card); min-height: 88px; border: 0; text-align: left; padding: 4px 4px 6px; display: flex; flex-direction: column; gap: 3px; position: relative; }
 .cell[data-blank="true"] { background: #DDE0E8; cursor: default; }
+
+/* Days already gone: the square recedes, but unfinished work must not.
+   A past day still owing homework shows its count in red instead. */
+.cell[data-past="true"] { background: #F0F1F5; }
+.cell[data-past="true"] .dnum { color: #9C9FAA; }
+.cell[data-past="true"] .cnt[data-kind="log"] b { color: #8A8D99; }
+.cell[data-past="true"] .cnt[data-kind="due"]:not([data-clear="true"]) b,
+.cell[data-past="true"] .cnt[data-kind="due"]:not([data-clear="true"]) { color: #C4442C; }
+
 .cell[data-hol="true"] { background: #D4D8E2; }
 .cell[data-hol="true"] .dnum { color: #7E828F; }
 .cell[data-off="true"] { background: #E0E3EA; }
@@ -496,11 +528,19 @@ const CSS = `
   display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .05em;
   text-transform: uppercase; color: var(--muted);
 }
+/* Today: the one warm square on a cool page. */
+.cell[data-today="true"] { background: #FFF2CE; box-shadow: inset 0 0 0 2px var(--ink); }
+
 .cell:hover:not([data-blank="true"]) { box-shadow: inset 0 0 0 3px var(--faint); }
+.cell[data-today="true"]:hover { box-shadow: inset 0 0 0 3px var(--ink); }
 .cell[data-sel="true"] { box-shadow: inset 0 0 0 3px var(--ink); }
-.cell .dnum { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; padding: 2px 2px 0; }
-.cell[data-today="true"] .dnum { background: var(--ink); color: #fff; padding: 3px 5px; }
+
+.cell .dnum { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; padding: 2px 2px 0; }
 .cell[data-weekend="true"] .dnum { color: var(--muted); }
+.cell[data-today="true"] .dnum {
+  background: var(--ink); color: #fff; padding: 4px 7px; font-size: 19px; font-weight: 800;
+  align-self: flex-start; letter-spacing: -.02em;
+}
 .counts { display: flex; flex-direction: column; gap: 3px; padding: 4px 4px 0; min-width: 0; }
 .cnt {
   display: flex; align-items: baseline; gap: 5px; min-width: 0;
@@ -516,6 +556,8 @@ const CSS = `
 
 @media (max-width: 720px) {
   .cell { min-height: 66px; }
+  .cell .dnum { font-size: 13px; }
+  .cell[data-today="true"] .dnum { font-size: 15px; padding: 3px 5px; }
   .counts { gap: 1px; padding: 2px 3px 0; }
   .cnt { font-size: 0; gap: 2px; }
   .cnt::after { font-size: 8px; letter-spacing: .04em; }
@@ -553,6 +595,10 @@ const CSS = `
 .note { font-size: 13px; line-height: 1.5; margin-top: 5px; color: #33333d; white-space: pre-wrap; word-break: break-word; }
 .pl .mkbox { width: 19px; height: 19px; flex: none; margin-top: 2px; display: grid; place-items: center; font-size: 10px; color: var(--c); }
 .donetag { color: #1B6E4F; font-weight: 800; }
+.logtag, .runtag, .lefttag { white-space: nowrap; }
+.runtag[data-tight="true"] { color: #C4442C; font-weight: 800; }
+.lefttag[data-level="late"] { color: #C4442C; font-weight: 800; }
+.lefttag[data-level="soon"] { color: #8a5c10; font-weight: 800; }
 .explain {
   margin: 0; padding: 9px 14px; border-bottom: 2px solid var(--faint); background: #F7F8FB;
   font-size: 11.5px; line-height: 1.5; color: #44485A;
@@ -1202,7 +1248,7 @@ function MonthGrid({ y, m, byDate, today, selected, onPick, logs, allItems, onOp
           <button
             key={k} className="cell" onClick={() => onPick(k)}
             data-today={k === today} data-sel={k === selected} data-weekend={wd === 0 || wd === 6}
-            data-hol={Boolean(hol)} data-off={off} data-short={Boolean(short)}
+            data-hol={Boolean(hol)} data-off={off} data-short={Boolean(short)} data-past={k < today}
             title={tip}
             aria-label={`${longDate(k)}${hol ? `, ${hol}` : ""}, ${list.length} due, ${logged} written down`}
           >
@@ -1271,6 +1317,8 @@ function RangeList({ items, today, empty, onToggle, onEdit, onAdd }) {
 
 function ItemRow({ it, onToggle, onEdit, showDue, readOnly }) {
   const s = SUBJ[it.subject];
+  const run = runway(it);
+  const left = remaining(it, todayKey());
   return (
     <div className="row" data-done={readOnly ? false : !!it.done}>
       {readOnly ? (
@@ -1286,6 +1334,23 @@ function ItemRow({ it, onToggle, onEdit, showDue, readOnly }) {
           {s.teacher && <span className="ttag">{s.teacher}</span>}
           <span className="ttag">{TYPE[it.type].mark} {TYPE[it.type].label}</span>
           {showDue && <span className="ttag">&middot; due {longDate(it.due)}</span>}
+          {!readOnly && it.announced && (
+            <span className="ttag logtag" title={`Written into the log on ${longDate(it.announced)}`}>
+              &middot; logged {it.announced === todayKey() ? "today" : shortDate(it.announced)}
+            </span>
+          )}
+          {run && (
+            <span className="ttag runtag" data-tight={run.tight}
+              title={`Announced ${longDate(it.announced)}, due ${longDate(it.due)}`}>
+              &middot; {run.text}
+            </span>
+          )}
+          {left && (
+            <span className="ttag lefttag" data-level={left.level}
+              title={`Due ${longDate(it.due)}`}>
+              &middot; {left.text}
+            </span>
+          )}
           {readOnly && it.done && <span className="ttag donetag">&middot; finished</span>}
           {it.addedBy && <span className="ttag">&middot; added by {it.addedBy}</span>}
           <button className="mini" onClick={() => onEdit(it)}>Edit</button>
